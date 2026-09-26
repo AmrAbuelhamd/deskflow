@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
  */
 
-#include "deskflow/StreamChunker.h"
+#include "deskflow/ClipboardSender.h"
 
 #include "base/Event.h"
 #include "base/IEventQueue.h"
@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <memory>
 
-StreamChunker::StreamChunker(IEventQueue *events, deskflow::IStream *stream)
+ClipboardSender::ClipboardSender(IEventQueue *events, deskflow::IStream *stream)
     : m_events(events),
       m_stream(stream),
       m_streamTarget(stream->getEventTarget())
@@ -24,12 +24,12 @@ StreamChunker::StreamChunker(IEventQueue *events, deskflow::IStream *stream)
   m_events->addHandler(EventTypes::StreamOutputFlushed, m_streamTarget, [this](const auto &) { sendNextChunk(); });
 }
 
-StreamChunker::~StreamChunker()
+ClipboardSender::~ClipboardSender()
 {
   m_events->removeHandler(EventTypes::StreamOutputFlushed, m_streamTarget);
 }
 
-void StreamChunker::sendClipboard(std::string data, ClipboardID id, uint32_t sequence)
+void ClipboardSender::sendClipboard(std::string data, ClipboardID id, uint32_t sequence)
 {
   if (m_sending && id != m_currentId) {
     LOG_DEBUG("queueing clipboard %d behind clipboard %d", id, m_currentId);
@@ -42,7 +42,7 @@ void StreamChunker::sendClipboard(std::string data, ClipboardID id, uint32_t seq
   }
 }
 
-void StreamChunker::beginTransfer(ClipboardID id, Transfer transfer)
+void ClipboardSender::beginTransfer(ClipboardID id, Transfer transfer)
 {
   m_current = std::move(transfer);
   m_currentId = id;
@@ -56,7 +56,7 @@ void StreamChunker::beginTransfer(ClipboardID id, Transfer transfer)
   sendNextChunk();
 }
 
-void StreamChunker::sendNextChunk()
+void ClipboardSender::sendNextChunk()
 {
   if (!m_sending) {
     return;
