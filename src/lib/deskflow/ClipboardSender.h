@@ -32,6 +32,7 @@ public:
   ClipboardSender &operator=(ClipboardSender &&) = delete;
 
   void sendClipboard(std::string data, ClipboardID id, uint32_t sequence);
+  void sendRemaining();
 
 private:
   struct Transfer
