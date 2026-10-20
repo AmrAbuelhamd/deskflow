@@ -34,6 +34,7 @@
 #include "platform/OSXScreenSaver.h"
 
 #include <AppKit/NSEvent.h>
+#include <AppKit/NSPasteboard.h>
 #include <AvailabilityMacros.h>
 #include <IOKit/hidsystem/event_status_driver.h>
 #include <dispatch/dispatch.h>
@@ -228,9 +229,27 @@ void *OSXComputer::getEventTarget() const
   return const_cast<OSXComputer *>(this);
 }
 
-bool OSXComputer::getClipboard(ClipboardID, IClipboard *dst) const
+bool OSXComputer::getClipboard(ClipboardID id, IClipboard *dst) const
 {
-  Clipboard::copy(dst, &m_pasteboard);
+  // macOS has one pasteboard, which is the clipboard; reading it again as the selection doubles the work
+  if (id == kClipboardSelection) {
+    if (dst->open(0)) {
+      dst->empty();
+      dst->close();
+    }
+    return true;
+  }
+
+  // reading converts every format, which is slow for big images, so reuse the last read while nothing changed
+  const long changeCount = [[NSPasteboard generalPasteboard] changeCount];
+  if (changeCount != m_pasteboardCacheChangeCount) {
+    Clipboard::copy(&m_pasteboardCache, &m_pasteboard);
+    m_pasteboardCacheChangeCount = changeCount;
+  } else {
+    LOG_DEBUG("pasteboard unchanged, reusing the last read");
+  }
+
+  Clipboard::copy(dst, &m_pasteboardCache);
   return true;
 }
 
