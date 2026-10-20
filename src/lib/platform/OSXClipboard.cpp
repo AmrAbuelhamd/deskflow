@@ -131,6 +131,15 @@ bool OSXClipboard::empty()
   return true;
 }
 
+bool OSXClipboard::holdsOwnFiles() const
+{
+  if (m_pboard == nullptr) {
+    return false;
+  }
+  PasteboardItemID item = nullptr;
+  return PasteboardGetItemIdentifier(m_pboard, (CFIndex)1, &item) == noErr && hasOwnFiles(m_pboard, item);
+}
+
 bool OSXClipboard::synchronize()
 {
   if (m_pboard == nullptr)

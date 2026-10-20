@@ -43,10 +43,14 @@ public:
 
   static Offers &instance();
 
+  //! Called for each listed file, e.g. to add where it can be found on a shared folder
+  using Annotate = std::function<void(const std::filesystem::path &, FileItem &)>;
+
   //! Registers copied files and returns the list for the clipboard. The same files give the
   //! same offer id, so reading the clipboard again doesn't look like a new copy.
   FileList publish(
-      const std::vector<std::filesystem::path> &paths, const std::string &sourceOs, const std::string &sourceHost
+      const std::vector<std::filesystem::path> &paths, const std::string &sourceOs, const std::string &sourceHost,
+      const Annotate &annotate = {}
   );
 
   //! The local path for a request, or nothing if no current offer covers it

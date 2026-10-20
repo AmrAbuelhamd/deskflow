@@ -25,6 +25,7 @@
 #include "platform/MSWindowsClipboard.h"
 #include "platform/MSWindowsDesks.h"
 #include "platform/MSWindowsEventQueueBuffer.h"
+#include "platform/MSWindowsFileClipboard.h"
 #include "platform/MSWindowsKeyState.h"
 #include "platform/MSWindowsScreenSaver.h"
 #include "platform/MSWindowsVirtualFiles.h"
@@ -322,20 +323,26 @@ void MSWindowsComputer::leave()
 
 namespace {
 
-// Test hook for virtual files: copying a special text on the server makes this client offer a test file
-void offerSelfTestFile(const IClipboard *src)
+// Files copied on the server become virtual files Explorer can paste. The test hook text
+// "deskflow-selftest:virtual-file" offers a small test file instead.
+void offerFiles(const IClipboard *src)
 {
   if (!src->open(0)) {
     return;
   }
   const auto text = src->has(IClipboard::Format::Text) ? src->get(IClipboard::Format::Text) : std::string();
+  const auto files = src->has(IClipboard::Format::FileList) ? src->get(IClipboard::Format::FileList) : std::string();
   src->close();
+
+  if (!files.empty()) {
+    MSWindowsFileClipboard::offerRemoteFiles(files, text);
+    return;
+  }
 
   auto access = MSWindowsVirtualFiles::ComAccess::InteractiveUsers;
   if (!MSWindowsVirtualFiles::isSelfTestRequest(text, access)) {
     return;
   }
-
   SYSTEMTIME now;
   GetLocalTime(&now);
   char created[64];
@@ -346,9 +353,10 @@ void offerSelfTestFile(const IClipboard *src)
   const std::string content = std::string("Deskflow virtual file test\r\nCreated: ") + created + "\r\nCOM access: " +
                               (access == MSWindowsVirtualFiles::ComAccess::Anyone ? "anyone" : "interactive users") +
                               "\r\n";
-
   LOG_INFO("virtual files: offering a test file");
-  MSWindowsVirtualFiles::instance().setFiles({{L"deskflow-selftest.txt", content}}, access);
+  MSWindowsVirtualFiles::instance().setFiles(
+      MSWindowsVirtualFiles::memorySource({{L"deskflow-selftest.txt", content}}), {}, access
+  );
 }
 
 } // namespace
@@ -365,7 +373,7 @@ bool MSWindowsComputer::setClipboard(ClipboardID id, const IClipboard *src)
   if (src != nullptr) {
     // save clipboard data
     const bool saved = Clipboard::copy(&dst, src);
-    offerSelfTestFile(src);
+    offerFiles(src);
     return saved;
   } else {
     // assert clipboard ownership
