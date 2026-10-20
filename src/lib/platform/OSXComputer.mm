@@ -28,6 +28,7 @@
 #include "mt/Thread.h"
 #include "platform/OSXClipboard.h"
 #include "platform/OSXEventQueueBuffer.h"
+#include "platform/OSXFileClipboard.h"
 #include "platform/OSXKeyState.h"
 #include "platform/OSXMediaKeySupport.h"
 #include "platform/OSXPasteboardPeeker.h"
@@ -866,6 +867,16 @@ bool OSXComputer::setClipboard(ClipboardID id, const IClipboard *src)
   if (src != nullptr) {
     LOG_DEBUG("setting clipboard");
     Clipboard::copy(&m_pasteboard, src);
+
+    // files copied on another computer go on the pasteboard for Finder
+    if (src->open(0)) {
+      const auto files = src->has(IClipboard::Format::FileList) ? src->get(IClipboard::Format::FileList) : std::string();
+      const auto text = src->has(IClipboard::Format::Text) ? src->get(IClipboard::Format::Text) : std::string();
+      src->close();
+      if (!files.empty()) {
+        OSXFileClipboard::offerRemoteFiles(files, text);
+      }
+    }
   }
   return true;
 }
@@ -894,6 +905,10 @@ void OSXComputer::checkClipboards()
 {
   LOG_VERBOSE("checking clipboard");
   if (m_pasteboard.synchronize()) {
+    // Deskflow's own write of files from another computer isn't a new copy
+    if (m_pasteboard.holdsOwnFiles()) {
+      return;
+    }
     LOG_DEBUG("clipboard changed");
     sendClipboardEvent(EventTypes::ClipboardGrabbed, kClipboardClipboard);
   }

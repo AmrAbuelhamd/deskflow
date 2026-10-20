@@ -53,7 +53,10 @@ Offers &Offers::instance()
   return s_instance;
 }
 
-FileList Offers::publish(const std::vector<fs::path> &paths, const std::string &sourceOs, const std::string &sourceHost)
+FileList Offers::publish(
+    const std::vector<fs::path> &paths, const std::string &sourceOs, const std::string &sourceHost,
+    const Annotate &annotate
+)
 {
   // per run, so offer ids can't be predicted
   static const auto salt = QByteArray::number(QRandomGenerator::system()->generate64());
@@ -76,6 +79,9 @@ FileList Offers::publish(const std::vector<fs::path> &paths, const std::string &
     item.isDirectory = entry->isDirectory;
     item.size = entry->size;
     item.modified = entry->modified;
+    if (annotate) {
+      annotate(path, item);
+    }
     list.items.push_back(item);
     kept.push_back(path);
 
