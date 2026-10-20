@@ -1,0 +1,173 @@
+# Builds a commit and publishes it as a GitHub release named <upstream version>-amr.<n>.
+# Run by hand for amr/main, or called by fork-sync.yml for a freshly merged upstream release,
+# in which case amr/main is only moved forward once the build and tests have passed.
+
+name: Fork release
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build and release
+        type: string
+        required: true
+      promote:
+        description: Fast-forward amr/main to this commit before publishing
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      base: ${{ steps.plan.outputs.base }}
+      label: ${{ steps.plan.outputs.label }}
+      tag: ${{ steps.plan.outputs.tag }}
+      skip: ${{ steps.plan.outputs.skip }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || 'amr/main' }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Work out the release name
+        id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          # Upstream's release tags are annotated; ours are lightweight and ignored here.
+          base=$(git describe --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' HEAD)
+          tags=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName -q '.[].tagName')
+          last=$(echo "$tags" | grep -E "^${base}-amr\.[0-9]+$" | sed -E 's/.*-amr\.//' | sort -n | tail -1 || true)
+          skip=false
+          if [ -n "$last" ] && [ "$(git rev-list -n 1 "${base}-amr.${last}" 2>/dev/null)" == "$sha" ]; then
+            echo "::notice::$sha is already released as ${base}-amr.${last}"
+            skip=true
+          fi
+          n=$(( ${last:-0} + 1 ))
+          {
+            echo "sha=$sha"
+            echo "base=$base"
+            echo "label=${base#v}-amr.$n"
+            echo "tag=${base}-amr.$n"
+            echo "skip=$skip"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release ${base}-amr.$n from $sha (skip=$skip)"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    uses: ./.github/workflows/fork-build.yml
+    with:
+      ref: ${{ needs.plan.outputs.sha }}
+      package-label: ${{ needs.plan.outputs.label }}
+    secrets: inherit
+
+  publish:
+    name: Publish
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          ssh-key: ${{ inputs.promote && secrets.FORK_DEPLOY_KEY || '' }}
+
+      - name: Move amr/main forward
+        if: inputs.promote
+        shell: bash
+        run: git push origin "${{ needs.plan.outputs.sha }}:refs/heads/amr/main"
+
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write release notes
+        shell: bash
+        env:
+          BASE: ${{ needs.plan.outputs.base }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          cd dist
+          sha256sum deskflow-* > sums.txt
+          cd ..
+          {
+            echo "Based on upstream Deskflow [${BASE#v}](https://github.com/deskflow/deskflow/releases/tag/${BASE})."
+            echo
+            echo "### Changes on top of upstream"
+            git log --no-merges --format='- %s (%h)' "${BASE}..${SHA}"
+            echo
+            echo "### Install"
+            echo "- macOS (Apple silicon): \`deskflow-*-macos-arm64.dmg\`"
+            echo "- Windows (x64): \`deskflow-*-win-x64.msi\`"
+            echo
+            echo "SHA-256 checksums are in \`sums.txt\`."
+          } > notes.md
+          cat notes.md
+
+      - name: Create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.plan.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ needs.plan.outputs.sha }}" \
+            --title "Deskflow ${{ needs.plan.outputs.label }}" \
+            --notes-file notes.md \
+            --latest \
+            dist/deskflow-* dist/sums.txt
+
+  report-failure:
+    name: Report a failed release
+    needs: [plan, build, publish]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Open an issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ needs.plan.outputs.label }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Release ${LABEL:-build} failed"
+          gh label create release-failed --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "A fork release build or publish failed" 2>/dev/null || true
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label release-failed \
+            --search "\"$title\" in:title" --json number -q '.[0].number')
+          body="The release workflow failed: $RUN_URL
+
+          Nothing was published and amr/main was not moved."
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label release-failed --body "$body"
+          fi

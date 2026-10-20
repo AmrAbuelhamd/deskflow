@@ -1,0 +1,114 @@
+# Weekly early warning: test-merges upstream's unreleased master into amr/main and builds it,
+# so conflicts and breakage show up before upstream ships them in a release.
+# Results go to a single "heads-up" issue that is closed again once everything is clean.
+
+name: Fork canary
+
+on:
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-canary
+  cancel-in-progress: true
+
+env:
+  ISSUE_TITLE: "Heads-up: upstream master no longer works with our changes"
+
+jobs:
+  merge:
+    name: Test-merge upstream master
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      ref: ${{ steps.merge.outputs.ref }}
+      upstream: ${{ steps.merge.outputs.upstream }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: amr/main
+          fetch-depth: 0
+          fetch-tags: true
+          ssh-key: ${{ secrets.FORK_DEPLOY_KEY }}
+
+      - name: Merge
+        id: merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git remote add upstream https://github.com/deskflow/deskflow.git
+          git fetch --quiet --tags upstream master
+          upstream=$(git rev-parse --short=10 upstream/master)
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c canary/upstream-master
+
+          if git merge --no-ff --no-edit -m "Test-merge upstream master $upstream" upstream/master; then
+            git push --force origin canary/upstream-master
+            echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          conflicts=$(git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/')
+          git merge --abort
+          {
+            echo "Upstream master ($upstream) no longer merges cleanly into \`amr/main\`."
+            echo
+            echo "Conflicting files:"
+            echo "$conflicts"
+          } > "$RUNNER_TEMP/report.md"
+          echo "report=conflict" >> "$GITHUB_OUTPUT"
+
+      - name: Report a conflict
+        if: steps.merge.outputs.report == 'conflict'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/fork/report-heads-up.sh "$RUNNER_TEMP/report.md"
+
+  build:
+    needs: merge
+    if: needs.merge.outputs.ref != ''
+    uses: ./.github/workflows/fork-build.yml
+    with:
+      ref: ${{ needs.merge.outputs.ref }}
+      package-label: canary
+    secrets: inherit
+
+  report:
+    name: Report
+    needs: [merge, build]
+    if: always() && needs.merge.outputs.ref != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: amr/main
+
+      - name: Open, update or close the heads-up issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.build.result }}
+          UPSTREAM: ${{ needs.merge.outputs.upstream }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$RESULT" == "success" ]; then
+            .github/fork/report-heads-up.sh --resolved "Upstream master ($UPSTREAM) merges and builds cleanly again: $RUN_URL"
+          else
+            echo "Upstream master ($UPSTREAM) merges cleanly into \`amr/main\`, but the build or tests fail: $RUN_URL" > "$RUNNER_TEMP/report.md"
+            .github/fork/report-heads-up.sh "$RUNNER_TEMP/report.md"
+          fi

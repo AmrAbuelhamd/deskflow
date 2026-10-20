@@ -1,0 +1,116 @@
+# Daily: mirrors upstream master, copies upstream's release tags, and merges the newest
+# upstream release into a sync/<tag> branch. A clean merge is built, tested and released
+# through fork-release.yml; a conflict opens an issue instead.
+#
+# Pushes use the FORK_DEPLOY_KEY deploy key because the built-in token can't push
+# upstream commits that change workflow files.
+
+name: Fork sync
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge the newest upstream release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      ref: ${{ steps.merge.outputs.ref }}
+      tag: ${{ steps.merge.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: amr/main
+          fetch-depth: 0
+          fetch-tags: true
+          ssh-key: ${{ secrets.FORK_DEPLOY_KEY }}
+
+      - name: Fetch upstream
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/deskflow/deskflow.git
+          git fetch --quiet --tags upstream master
+
+      - name: Mirror upstream master
+        shell: bash
+        run: git push --force origin refs/remotes/upstream/master:refs/heads/master
+
+      - name: Merge
+        id: merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          echo "Newest upstream release: $tag"
+
+          # Our version numbers come from upstream's annotated release tags.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            git push origin "refs/tags/$tag"
+          fi
+
+          if git merge-base --is-ancestor "$tag" HEAD; then
+            echo "amr/main already contains $tag"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="sync/$tag"
+          git switch -c "$branch"
+
+          if git merge --no-ff --no-edit -m "Merge upstream $tag" "$tag"; then
+            git push --force origin "$branch"
+            echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          conflicts=$(git diff --name-only --diff-filter=U | sed 's/^/- `/; s/$/`/')
+          git merge --abort
+
+          title="Manual merge needed: upstream $tag"
+          gh label create upstream-conflict --repo "$GITHUB_REPOSITORY" --color D93F0B \
+            --description "An upstream release doesn't merge cleanly" 2>/dev/null || true
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label upstream-conflict \
+            --search "\"$title\" in:title" --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "Issue #$existing is already open"
+            exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label upstream-conflict --body "Upstream released [$tag](https://github.com/deskflow/deskflow/releases/tag/$tag), but it doesn't merge cleanly into \`amr/main\`. Nothing was built or published.
+
+          Conflicting files:
+          $conflicts
+
+          To resolve:
+          \`\`\`bash
+          git fetch upstream --tags
+          git switch -c sync/$tag origin/amr/main
+          git merge $tag
+          # fix the conflicts, build, then fast-forward amr/main and run the Fork release workflow
+          \`\`\`
+
+          If the conflicts are in the PR 10201 carry block, upstream has probably shipped its own fix: take upstream's version and drop the carried commits."
+
+  release:
+    needs: merge
+    if: needs.merge.outputs.ref != ''
+    uses: ./.github/workflows/fork-release.yml
+    with:
+      ref: ${{ needs.merge.outputs.ref }}
+      promote: true
+    secrets: inherit
