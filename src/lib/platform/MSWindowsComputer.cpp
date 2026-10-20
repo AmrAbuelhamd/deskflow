@@ -27,9 +27,11 @@
 #include "platform/MSWindowsEventQueueBuffer.h"
 #include "platform/MSWindowsKeyState.h"
 #include "platform/MSWindowsScreenSaver.h"
+#include "platform/MSWindowsVirtualFiles.h"
 
 #include <Shlobj.h>
 #include <algorithm>
+#include <cstdio>
 #include <comutil.h>
 #include <string.h>
 
@@ -318,6 +320,39 @@ void MSWindowsComputer::leave()
   m_isOnComputer = false;
 }
 
+namespace {
+
+// Test hook for virtual files: copying a special text on the server makes this client offer a test file
+void offerSelfTestFile(const IClipboard *src)
+{
+  if (!src->open(0)) {
+    return;
+  }
+  const auto text = src->has(IClipboard::Format::Text) ? src->get(IClipboard::Format::Text) : std::string();
+  src->close();
+
+  auto access = MSWindowsVirtualFiles::ComAccess::InteractiveUsers;
+  if (!MSWindowsVirtualFiles::isSelfTestRequest(text, access)) {
+    return;
+  }
+
+  SYSTEMTIME now;
+  GetLocalTime(&now);
+  char created[64];
+  snprintf(
+      created, sizeof(created), "%04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
+      now.wSecond
+  );
+  const std::string content = std::string("Deskflow virtual file test\r\nCreated: ") + created + "\r\nCOM access: " +
+                              (access == MSWindowsVirtualFiles::ComAccess::Anyone ? "anyone" : "interactive users") +
+                              "\r\n";
+
+  LOG_INFO("virtual files: offering a test file");
+  MSWindowsVirtualFiles::instance().setFiles({{L"deskflow-selftest.txt", content}}, access);
+}
+
+} // namespace
+
 bool MSWindowsComputer::setClipboard(ClipboardID id, const IClipboard *src)
 {
   // windows has one clipboard, so writing the selection would overwrite the clipboard
@@ -329,7 +364,9 @@ bool MSWindowsComputer::setClipboard(ClipboardID id, const IClipboard *src)
   MSWindowsClipboard dst(m_window);
   if (src != nullptr) {
     // save clipboard data
-    return Clipboard::copy(&dst, src);
+    const bool saved = Clipboard::copy(&dst, src);
+    offerSelfTestFile(src);
+    return saved;
   } else {
     // assert clipboard ownership
     if (!dst.open(0)) {
