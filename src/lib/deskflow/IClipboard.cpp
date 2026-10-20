@@ -12,6 +12,30 @@
 #include <assert.h>
 #include <vector>
 
+namespace {
+
+// The file list goes on the wire with a fixed id, far from the sequential ones, so it can't
+// collide with formats added upstream later. Peers that don't know it skip it.
+constexpr uint32_t kFileListWireId = 0x4446464c; // "DFFL"
+
+uint32_t wireIdFromFormat(IClipboard::Format format)
+{
+  return format == IClipboard::Format::FileList ? kFileListWireId : static_cast<uint32_t>(format);
+}
+
+IClipboard::Format formatFromWireId(uint32_t id)
+{
+  if (id == kFileListWireId) {
+    return IClipboard::Format::FileList;
+  }
+  if (id >= static_cast<uint32_t>(IClipboard::Format::FileList)) {
+    return IClipboard::Format::TotalFormats; // unknown, skipped
+  }
+  return static_cast<IClipboard::Format>(id);
+}
+
+} // namespace
+
 //
 // IClipboard
 //
@@ -44,7 +68,7 @@ void IClipboard::unmarshall(IClipboard *clipboard, const std::string_view &data,
         break;
       }
       // get the format id
-      auto format = static_cast<IClipboard::Format>(readUInt32(index));
+      auto format = formatFromWireId(readUInt32(index));
       index += 4;
 
       // get the size of the format data
@@ -107,7 +131,7 @@ std::string IClipboard::marshall(const IClipboard *clipboard)
     writeUInt32(&data, numFormats);
     for (uint32_t format = 0; format != totalClipboardFormats; ++format) {
       if (clipboard->has(static_cast<IClipboard::Format>(format))) {
-        writeUInt32(&data, format);
+        writeUInt32(&data, wireIdFromFormat(static_cast<IClipboard::Format>(format)));
         writeUInt32(&data, (uint32_t)formatData[format].size());
         data += formatData[format];
       }

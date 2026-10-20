@@ -51,6 +51,7 @@ public:
     Text,        //!< Text format, UTF-8, newline is LF
     HTML,        //!< HTML format, HTML fragment, UTF-8, newline is LF
     Bitmap,      //!< Bitmap format, BMP 24/32bpp, BI_RGB
+    FileList,    //!< Files copied on the source computer, see filetransfer/FileList.h
     TotalFormats //!< The number of clipboard formats supported
   };
 
