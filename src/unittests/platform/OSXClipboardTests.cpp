@@ -11,6 +11,10 @@
 #include "platform/OSXClipboard.h"
 #include "platform/OSXClipboardUTF8Converter.h"
 
+#include <QDebug>
+#include <QTemporaryFile>
+#include <QUrl>
+
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,6 +64,27 @@ void putItem(const std::vector<std::pair<CFStringRef, std::string>> &flavors)
   CFRelease(pboard);
 }
 
+// The flavors of the first item on the general pasteboard, for diagnostics
+QStringList flavorsOnPasteboard()
+{
+  QStringList result;
+  PasteboardRef pboard = nullptr;
+  if (PasteboardCreate(kPasteboardClipboard, &pboard) != noErr) {
+    return result;
+  }
+  PasteboardSynchronize(pboard);
+  PasteboardItemID item = nullptr;
+  CFArrayRef flavors = nullptr;
+  if (PasteboardGetItemIdentifier(pboard, 1, &item) == noErr && PasteboardCopyItemFlavors(pboard, item, &flavors) == noErr) {
+    for (CFIndex i = 0; i < CFArrayGetCount(flavors); ++i) {
+      result << QString::fromCFString(static_cast<CFStringRef>(CFArrayGetValueAtIndex(flavors, i)));
+    }
+    CFRelease(flavors);
+  }
+  CFRelease(pboard);
+  return result;
+}
+
 // A 1x1 24-bit BMP file
 std::string tinyBmp()
 {
@@ -87,14 +112,22 @@ void OSXClipboardTests::bitmapWithoutFile()
 
 void OSXClipboardTests::fileCopySkipsIcon()
 {
+  // macOS only keeps file URLs on the general pasteboard for files that exist
+  QTemporaryFile file;
+  QVERIFY(file.open());
+  const auto url = QUrl::fromLocalFile(file.fileName()).toString(QUrl::FullyEncoded).toStdString();
+
   // what Finder offers when a file is copied: its location, its name and its icon
   putItem(
-      {{CFSTR("public.file-url"), "file:///tmp/deskflow-test.txt"},
+      {{CFSTR("public.file-url"), url},
        {CFSTR("public.utf8-plain-text"), "deskflow-test.txt"},
        {CFSTR("com.microsoft.bmp"), tinyBmp()}}
   );
 
   OSXClipboard clipboard;
+  if (clipboard.has(IClipboard::Format::Bitmap)) {
+    qWarning() << "pasteboard flavors:" << flavorsOnPasteboard();
+  }
   QVERIFY(!clipboard.has(IClipboard::Format::Bitmap));
   QVERIFY(clipboard.get(IClipboard::Format::Bitmap).empty());
   QVERIFY(clipboard.has(IClipboard::Format::Text));
