@@ -1,0 +1,225 @@
+# Builds the macOS (arm64) .dmg and Windows (x64) .msi for this fork, runs the unit tests
+# and smoke-tests the packages. Reuses upstream's composite actions so dependency changes
+# (Qt, OpenSSL, WiX) arrive with each upstream merge.
+
+name: Fork build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit, branch or tag to build
+        type: string
+        required: true
+      package-label:
+        description: Version label used in the package file names, e.g. 1.27.0-amr.1
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      package-label:
+        description: Version label used in the package file names
+        type: string
+        default: dev
+  pull_request:
+    branches: [amr/main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-build-${{ inputs.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  settings:
+    name: Read upstream build settings
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      label: ${{ steps.label.outputs.label }}
+      qt-macos: ${{ steps.upstream.outputs.qt-macos }}
+      qt-windows: ${{ steps.upstream.outputs.qt-windows }}
+      runner-macos: ${{ steps.upstream.outputs.runner-macos }}
+      runner-windows: ${{ steps.upstream.outputs.runner-windows }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Check the package label
+        id: label
+        shell: bash
+        env:
+          LABEL: ${{ inputs.package-label || 'dev' }}
+        run: |
+          if [[ ! "$LABEL" =~ ^[0-9A-Za-z][0-9A-Za-z.-]{0,40}$ ]]; then
+            echo "::error::Invalid package label: $LABEL"
+            exit 1
+          fi
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+
+      # Follow whatever Qt version and runner image upstream uses for the same targets.
+      - name: Read upstream's matrix
+        id: upstream
+        shell: bash
+        run: |
+          ci=.github/workflows/continuous-integration.yml
+          get() {
+            yq ".jobs[\"main-build\"].strategy.matrix.target[] | select(.name == \"$1\") | .[\"$2\"] // \"\"" "$ci"
+          }
+          qt_macos=$(get macos-arm64 qt-version)
+          qt_windows=$(get windows-2022-x64 qt-version)
+          runner_macos=$(get macos-arm64 runs-on)
+          runner_windows=$(get windows-2022-x64 runs-on)
+          for v in qt_macos qt_windows runner_macos runner_windows; do
+            if [ -z "${!v}" ]; then
+              echo "::warning::Could not read $v from upstream's CI matrix; using the fallback"
+            fi
+          done
+          echo "qt-macos=${qt_macos:-6.11.3}" >> "$GITHUB_OUTPUT"
+          echo "qt-windows=${qt_windows:-6.11.3}" >> "$GITHUB_OUTPUT"
+          echo "runner-macos=${runner_macos:-macos-15}" >> "$GITHUB_OUTPUT"
+          echo "runner-windows=${runner_windows:-windows-2022}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.target.name }}
+    needs: settings
+    runs-on: ${{ matrix.target.os == 'macos' && needs.settings.outputs.runner-macos || needs.settings.outputs.runner-windows }}
+    timeout-minutes: ${{ matrix.target.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: macos-arm64
+            os: macos
+            timeout: 40
+            config-args: '-DCMAKE_OSX_ARCHITECTURES="arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=14 ${APPLE_CODESIGN_DEV:+-DAPPLE_CODESIGN_DEV="$APPLE_CODESIGN_DEV"}'
+
+          - name: windows-x64
+            os: windows
+            timeout: 60
+            config-args: "-G Ninja"
+            vcpkg-triplet: x64-windows-release
+            arch: amd64
+
+    env:
+      PACKAGE_LABEL: ${{ needs.settings.outputs.label }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup VC++ environment
+        if: runner.os == 'Windows'
+        uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: ${{ matrix.target.arch }}
+          spectre: true
+
+      - name: Install dependencies
+        id: deps
+        uses: ./.github/actions/install-dependencies
+        with:
+          qt-version: ${{ matrix.target.os == 'macos' && needs.settings.outputs.qt-macos || needs.settings.outputs.qt-windows }}
+          vcpkg-triplet: ${{ matrix.target.vcpkg-triplet }}
+
+      - name: Check for a signing certificate
+        id: sign
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          P12: ${{ secrets.FORK_CODESIGN_P12 }}
+        run: |
+          if [ -n "$P12" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No signing certificate available; the app will be ad-hoc signed"
+          fi
+
+      - name: Import signing certificate
+        if: steps.sign.outputs.enabled == 'true'
+        uses: ./.github/actions/codesign-keychain
+        with:
+          action: import
+          apple-codesign-p12: ${{ secrets.FORK_CODESIGN_P12 }}
+          apple-codesign-p12-pwd: ${{ secrets.FORK_CODESIGN_P12_PWD }}
+
+      - name: Configure
+        env:
+          APPLE_CODESIGN_DEV: ${{ steps.sign.outputs.enabled == 'true' && secrets.FORK_CODESIGN_ID || '' }}
+        run: cmake -Bbuild -DCMAKE_BUILD_TYPE=Release -DSKIP_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON ${{ matrix.target.config-args }} ${{ steps.deps.outputs.vcpkg-cmake-config }} -DPACKAGE_VERSION_LABEL="${{ env.PACKAGE_LABEL }}"
+
+      - name: Build and package
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" != "macOS" ]; then
+            cmake --build build --config Release -j8 --target package
+          else
+            cmake --build build --config Release -j8
+            # DMG creation is occasionally flaky on hosted runners
+            for i in 1 2 3 4 5; do
+              if cmake --build build --config Release -j8 --target package; then
+                exit 0
+              fi
+              echo "Package attempt $i failed"
+              sleep 1
+            done
+            echo "Packaging failed after 5 attempts" >&2
+            exit 1
+          fi
+
+      - name: Check the app signature
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          dmg=$(ls build/deskflow-*.dmg | head -1)
+          echo "Y" | hdiutil attach "$dmg" -nobrowse -mountpoint /tmp/deskflow-check > /dev/null
+          app=/tmp/deskflow-check/Deskflow.app
+          status=0
+          codesign --verify --deep --strict --verbose=2 "$app" || status=1
+          codesign -dv "$app" 2>&1 | grep -E "^(Identifier|Format|Authority|Signature|TeamIdentifier|Timestamp)" || true
+          codesign -d -r- "$app" 2>&1 | tail -1
+          if [ "${{ steps.sign.outputs.enabled }}" == "true" ] && codesign -dv "$app" 2>&1 | grep -q "Signature=adhoc"; then
+            echo "::error::Expected a certificate signature, but the app is ad-hoc signed"
+            status=1
+          fi
+          hdiutil detach /tmp/deskflow-check > /dev/null
+          exit $status
+
+      - name: Clean up keychain
+        if: always() && steps.sign.outputs.enabled == 'true'
+        uses: ./.github/actions/codesign-keychain
+        with:
+          action: cleanup
+
+      - name: Check for unexpected repo changes
+        shell: bash
+        run: |
+          if [[ $(git status --porcelain) ]]; then
+            echo "Unexpected files changed in the repo (often regenerated translation files)"
+            git status --porcelain=v1
+            exit 1
+          fi
+
+      - name: Tests
+        uses: ./.github/actions/run-tests
+        timeout-minutes: 5
+        with:
+          job: ${{ matrix.target.name }}
+
+      - name: Test package
+        uses: ./.github/actions/test-package
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.target.name }}
+          path: ${{ github.workspace }}/build/deskflow[-_]*.*
+          if-no-files-found: error
