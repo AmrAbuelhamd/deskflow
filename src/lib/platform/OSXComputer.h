@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "deskflow/Clipboard.h"
 #include "deskflow/PlatformComputer.h"
 #include "platform/OSXClipboard.h"
 #include "platform/OSXPowerManager.h"
@@ -159,6 +160,8 @@ private:
   void handleConfirmSleep(const Event &event);
 
   bool checkAXPermissions();
+  void startClipboardPoll();
+  void stopClipboardPoll();
 
   // global hotkey operating mode
   static bool isGlobalHotKeyOperatingModeAvailable();
@@ -257,6 +260,9 @@ private:
 
   // clipboards
   OSXClipboard m_pasteboard;
+  // last read of the pasteboard, reused while its change count stays the same
+  mutable Clipboard m_pasteboardCache;
+  mutable long m_pasteboardCacheChangeCount = -1;
   uint32_t m_sequenceNumber;
 
   // screen saver stuff
@@ -298,6 +304,8 @@ private:
   // global hotkey operating mode
   static bool s_testedForGHOM;
   static bool s_hasGHOM;
+
+  static constexpr double kClipboardPollSeconds = 0.1;
 
   // Quartz input event support
   CFMachPortRef m_eventTapPort;
