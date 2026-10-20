@@ -9,11 +9,17 @@
 
 #include "arch/ArchException.h"
 #include "base/Log.h"
+#include "common/Settings.h"
+#include "filetransfer/Offers.h"
 #include "platform/OSXClipboardBMPConverter.h"
 #include "platform/OSXClipboardHTMLConverter.h"
 #include "platform/OSXClipboardTextConverter.h"
 #include "platform/OSXClipboardUTF16Converter.h"
 #include "platform/OSXClipboardUTF8Converter.h"
+
+#include <climits>
+#include <filesystem>
+#include <vector>
 
 namespace {
 
@@ -22,6 +28,59 @@ bool isFileCopy(PasteboardRef pboard, PasteboardItemID item)
 {
   PasteboardFlavorFlags flags;
   return PasteboardGetItemFlavorFlags(pboard, item, CFSTR("public.file-url"), &flags) == noErr;
+}
+
+// Marks pasteboard items written by Deskflow, so its own writes aren't read back as a new copy
+const CFStringRef kOwnFilesFlavor = CFSTR("org.deskflow.file-list");
+
+// The files copied in Finder: one pasteboard item per file, each with a file URL. Items whose URL is
+// only promised are skipped; reading them would make the app that copied them produce the file.
+std::vector<std::filesystem::path> copiedFiles(PasteboardRef pboard)
+{
+  std::vector<std::filesystem::path> files;
+  ItemCount count = 0;
+  if (PasteboardGetItemCount(pboard, &count) != noErr) {
+    return files;
+  }
+
+  for (ItemCount index = 1; index <= count; ++index) {
+    PasteboardItemID item = nullptr;
+    PasteboardFlavorFlags flags = 0;
+    if (PasteboardGetItemIdentifier(pboard, static_cast<CFIndex>(index), &item) != noErr ||
+        PasteboardGetItemFlavorFlags(pboard, item, CFSTR("public.file-url"), &flags) != noErr ||
+        (flags & kPasteboardFlavorPromised) != 0) {
+      continue;
+    }
+
+    CFDataRef data = nullptr;
+    if (PasteboardCopyItemFlavorData(pboard, item, CFSTR("public.file-url"), &data) != noErr || data == nullptr) {
+      continue;
+    }
+    // Finder writes file reference URLs (file:///.file/id=...); turn them into paths
+    CFURLRef url =
+        CFURLCreateWithBytes(nullptr, CFDataGetBytePtr(data), CFDataGetLength(data), kCFStringEncodingUTF8, nullptr);
+    CFRelease(data);
+    if (url == nullptr) {
+      continue;
+    }
+    CFURLRef pathUrl = CFURLCreateFilePathURL(nullptr, url, nullptr);
+    CFRelease(url);
+    if (pathUrl == nullptr) {
+      continue;
+    }
+    char path[PATH_MAX];
+    if (CFURLGetFileSystemRepresentation(pathUrl, true, reinterpret_cast<UInt8 *>(path), sizeof(path))) {
+      files.emplace_back(path);
+    }
+    CFRelease(pathUrl);
+  }
+  return files;
+}
+
+bool hasOwnFiles(PasteboardRef pboard, PasteboardItemID item)
+{
+  PasteboardFlavorFlags flags;
+  return PasteboardGetItemFlavorFlags(pboard, item, kOwnFilesFlavor, &flags) == noErr;
 }
 
 } // namespace
@@ -153,6 +212,9 @@ bool OSXClipboard::has(Format format) const
   if (format == Format::Bitmap && isFileCopy(m_pboard, item)) {
     return false;
   }
+  if (format == Format::FileList) {
+    return isFileCopy(m_pboard, item) && !hasOwnFiles(m_pboard, item);
+  }
 
   for (ConverterList::const_iterator index = m_converters.begin(); index != m_converters.end(); ++index) {
     IOSXClipboardConverter *converter = *index;
@@ -184,6 +246,20 @@ std::string OSXClipboard::get(Format format) const
 
   if (format == Format::Bitmap && isFileCopy(m_pboard, item)) {
     return result;
+  }
+  if (format == Format::FileList) {
+    if (hasOwnFiles(m_pboard, item)) {
+      return result;
+    }
+    const auto files = copiedFiles(m_pboard);
+    if (files.empty()) {
+      return result;
+    }
+    // the name other computers know this one by
+    const auto host = Settings::value(Settings::Core::ComputerName).toString().toStdString();
+    const auto list = deskflow::filetransfer::Offers::instance().publish(files, "macos", host);
+    LOG_DEBUG("copied files: %zu, offer %s", list.items.size(), list.offerId.c_str());
+    return list.items.empty() ? result : list.toJson();
   }
 
   // find the converter for the first clipboard format we can handle
