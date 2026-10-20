@@ -174,10 +174,10 @@ bool FileService::startServer(const TlsSettings &tls, uint16_t port, std::string
     m_server = true;
     m_tls = tls;
     m_port = listener->port();
+    // The token travels as option values, which a client may misread as option ids
+    // (4 ASCII characters); a high bit in every word keeps it from looking like one.
     for (auto &word : m_token) {
-      do {
-        word = QRandomGenerator::system()->generate();
-      } while (word == 0);
+      word = QRandomGenerator::system()->generate() | 0x80000000u;
     }
     m_listener = std::move(listener);
   }

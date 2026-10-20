@@ -7,6 +7,8 @@ add_library(filetransfer STATIC
   FileList.h
   FileService.cpp
   FileService.h
+  Integration.cpp
+  Integration.h
   Offers.cpp
   Offers.h
   TlsChannel.cpp
