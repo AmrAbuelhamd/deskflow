@@ -340,6 +340,7 @@ private:
   // When checking the default values this list contains the ones that default to false.
   inline static const QStringList m_defaultFalseValues = {
       Gui::Autohide
+    , Gui::AutoUpdateCheck
     , Gui::AutoStartCore
     , Gui::ShownFirstConnectedMessage
     , Gui::ShownServerFirstStartMessage
