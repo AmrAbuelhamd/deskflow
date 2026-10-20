@@ -12,3 +12,11 @@ create_test(
   SOURCE FileListTests.cpp
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/src/lib/filetransfer"
 )
+
+create_test(
+  NAME FileServiceTests
+  DEPENDS filetransfer
+  LIBS net base ${extra_libs}
+  SOURCE FileServiceTests.cpp
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/src/lib/filetransfer"
+)
