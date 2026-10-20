@@ -190,6 +190,16 @@ jobs:
             echo "::error::Expected a certificate signature, but the app is ad-hoc signed"
             status=1
           fi
+          # other processes must not be able to attach a debugger to an app with Accessibility rights
+          for binary in "$app" "$app/Contents/MacOS/deskflow-core"; do
+            entitlements=$(codesign -d --entitlements - --xml "$binary" 2>/dev/null | plutil -convert xml1 -o - - 2>/dev/null || true)
+            echo "Entitlements of $(basename "$binary"):"
+            echo "$entitlements" | grep "<key>" || echo "  (none)"
+            if echo "$entitlements" | grep -q "get-task-allow"; then
+              echo "::error::$(basename "$binary") can be attached to by debuggers (get-task-allow)"
+              status=1
+            fi
+          done
           hdiutil detach /tmp/deskflow-check > /dev/null
           exit $status
 
