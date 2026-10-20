@@ -19,6 +19,7 @@
 #include "deskflow/DisplayException.h"
 #include "deskflow/ProtocolTypes.h"
 #include "deskflow/ipc/CoreIpc.h"
+#include "filetransfer/Integration.h"
 #include "net/SocketException.h"
 #include "net/SocketMultiplexer.h"
 #include "net/TCPSocketFactory.h"
@@ -198,6 +199,7 @@ void ServerApp::stopServer()
 {
   using enum ServerState;
   if (m_serverState == Started) {
+    deskflow::filetransfer::stop();
     closeServer(m_server);
     closeClientListener(m_listener);
     m_server = nullptr;
@@ -373,6 +375,7 @@ bool ServerApp::startServer()
     listener->setServer(m_server);
     m_server->setListener(listener);
     m_listener = listener;
+    deskflow::filetransfer::startServer();
     LOG_DEBUG("started server, waiting for clients");
     ipcSendConnectionState(deskflow::core::ConnectionState::Listening);
     m_serverState = Started;

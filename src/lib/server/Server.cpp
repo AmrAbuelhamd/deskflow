@@ -17,6 +17,7 @@
 #include "deskflow/OptionTypes.h"
 #include "deskflow/PacketStreamFilter.h"
 #include "deskflow/ProtocolTypes.h"
+#include "filetransfer/Integration.h"
 #include "deskflow/ipc/CoreIpc.h"
 #include "net/TCPSocket.h"
 #include "server/ClientListener.h"
@@ -1061,6 +1062,9 @@ void Server::sendOptions(BaseClientProxy *client) const
       optionsList.push_back(static_cast<uint32_t>(optionValue));
     }
   }
+
+  // offer the file connection, if it's running
+  deskflow::filetransfer::appendOptions(optionsList);
 
   // send the options
   client->resetOptions();
