@@ -15,6 +15,17 @@
 #include "platform/OSXClipboardUTF16Converter.h"
 #include "platform/OSXClipboardUTF8Converter.h"
 
+namespace {
+
+// Finder copies a file's icon along with its location; that icon isn't a picture the user copied
+bool isFileCopy(PasteboardRef pboard, PasteboardItemID item)
+{
+  PasteboardFlavorFlags flags;
+  return PasteboardGetItemFlavorFlags(pboard, item, CFSTR("public.file-url"), &flags) == noErr;
+}
+
+} // namespace
+
 //
 // OSXClipboard
 //
@@ -139,6 +150,10 @@ bool OSXClipboard::has(Format format) const
   PasteboardItemID item;
   PasteboardGetItemIdentifier(m_pboard, (CFIndex)1, &item);
 
+  if (format == Format::Bitmap && isFileCopy(m_pboard, item)) {
+    return false;
+  }
+
   for (ConverterList::const_iterator index = m_converters.begin(); index != m_converters.end(); ++index) {
     IOSXClipboardConverter *converter = *index;
     if (converter->getFormat() == format) {
@@ -166,6 +181,10 @@ std::string OSXClipboard::get(Format format) const
     return result;
 
   PasteboardGetItemIdentifier(m_pboard, (CFIndex)1, &item);
+
+  if (format == Format::Bitmap && isFileCopy(m_pboard, item)) {
+    return result;
+  }
 
   // find the converter for the first clipboard format we can handle
   IOSXClipboardConverter *converter = nullptr;

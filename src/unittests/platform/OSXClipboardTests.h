@@ -15,6 +15,8 @@ private Q_SLOTS:
   void open();
   void singleFormat();
   void formatConvert_UTF8();
+  void bitmapWithoutFile();
+  void fileCopySkipsIcon();
 
 private:
   Log m_log;
