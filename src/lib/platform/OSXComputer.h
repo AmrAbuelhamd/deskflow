@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "deskflow/Clipboard.h"
 #include "deskflow/PlatformComputer.h"
 #include "platform/OSXClipboard.h"
 #include "platform/OSXPowerManager.h"
@@ -259,6 +260,9 @@ private:
 
   // clipboards
   OSXClipboard m_pasteboard;
+  // last read of the pasteboard, reused while its change count stays the same
+  mutable Clipboard m_pasteboardCache;
+  mutable long m_pasteboardCacheChangeCount = -1;
   uint32_t m_sequenceNumber;
 
   // screen saver stuff
