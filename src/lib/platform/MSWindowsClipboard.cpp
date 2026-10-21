@@ -7,6 +7,7 @@
  */
 
 #include "platform/MSWindowsClipboard.h"
+#include "platform/MSWindowsFileClipboard.h"
 
 #include "base/Log.h"
 #include "platform/MSWindowsClipboardBitmapConverter.h"
@@ -154,6 +155,9 @@ IClipboard::Time MSWindowsClipboard::getTime() const
 
 bool MSWindowsClipboard::has(Format format) const
 {
+  if (format == Format::FileList) {
+    return MSWindowsFileClipboard::hasCopiedFiles();
+  }
   for (ConverterList::const_iterator index = m_converters.begin(); index != m_converters.end(); ++index) {
     IMSWindowsClipboardConverter *converter = *index;
     if (converter->getFormat() == format) {
@@ -167,6 +171,10 @@ bool MSWindowsClipboard::has(Format format) const
 
 std::string MSWindowsClipboard::get(Format format) const
 {
+  if (format == Format::FileList) {
+    return MSWindowsFileClipboard::copiedFiles();
+  }
+
   // find the converter for the first clipboard format we can handle
   IMSWindowsClipboardConverter *converter = nullptr;
   for (ConverterList::const_iterator index = m_converters.begin(); index != m_converters.end(); ++index) {
@@ -211,7 +219,17 @@ bool MSWindowsClipboard::isOwnedByDeskflow()
   if (s_ownershipFormat == 0) {
     s_ownershipFormat = RegisterClipboardFormat(TEXT("Deskflow Ownership"));
   }
-  return (IsClipboardFormatAvailable(getOwnershipFormat()) != 0);
+  if (IsClipboardFormatAvailable(getOwnershipFormat()) != 0) {
+    return true;
+  }
+
+  // Deskflow's virtual-file thread may be part-way through putting files on the clipboard,
+  // before the marker is there; its window belongs to this process
+  DWORD process = 0;
+  if (const HWND owner = GetClipboardOwner(); owner != nullptr && GetWindowThreadProcessId(owner, &process) != 0) {
+    return process == GetCurrentProcessId();
+  }
+  return false;
 }
 
 UINT MSWindowsClipboard::getOwnershipFormat()

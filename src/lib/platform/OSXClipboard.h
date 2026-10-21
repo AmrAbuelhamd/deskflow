@@ -36,6 +36,9 @@ public:
 
   bool synchronize();
 
+  //! True if the pasteboard holds files Deskflow put there from another computer
+  bool holdsOwnFiles() const;
+
 private:
   void clearConverters();
 

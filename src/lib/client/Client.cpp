@@ -24,6 +24,7 @@
 #include "deskflow/ProtocolTypes.h"
 #include "deskflow/ProtocolUtil.h"
 #include "deskflow/ipc/CoreIpc.h"
+#include "filetransfer/Integration.h"
 #include "net/IDataSocket.h"
 #include "net/ISocketFactory.h"
 #include "net/SecureSocket.h"
@@ -358,6 +359,8 @@ void Client::setOptions(const OptionsList &options)
   }
 
   m_computer->setOptions(options);
+
+  deskflow::filetransfer::handleOptions(options, m_serverAddress.getHostname(), getName());
 }
 
 void Client::saveRelativeRestorePosition()
@@ -524,6 +527,7 @@ void Client::cleanupConnecting()
 
 void Client::cleanupConnection()
 {
+  deskflow::filetransfer::stop();
   if (m_stream != nullptr) {
     using enum EventTypes;
     m_events->removeHandler(StreamInputReady, m_stream->getEventTarget());

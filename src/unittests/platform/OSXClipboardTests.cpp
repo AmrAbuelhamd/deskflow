@@ -10,8 +10,11 @@
 
 #include "platform/OSXClipboard.h"
 #include "platform/OSXClipboardUTF8Converter.h"
+#include "filetransfer/FileList.h"
 
 #include <QDebug>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QUrl>
 
@@ -132,6 +135,32 @@ void OSXClipboardTests::fileCopySkipsIcon()
   QVERIFY(clipboard.get(IClipboard::Format::Bitmap).empty());
   QVERIFY(clipboard.has(IClipboard::Format::Text));
   QCOMPARE(clipboard.get(IClipboard::Format::Text), std::string("deskflow-test.txt"));
+}
+
+void OSXClipboardTests::fileCopyGivesFileList()
+{
+  QTemporaryDir dir;
+  QVERIFY(dir.isValid());
+  const auto filePath = dir.filePath("report final.pdf");
+  QFile file(filePath);
+  QVERIFY(file.open(QIODevice::WriteOnly));
+  file.write("12345");
+  file.close();
+
+  putItem(
+      {{CFSTR("public.file-url"), QUrl::fromLocalFile(filePath).toString(QUrl::FullyEncoded).toStdString()},
+       {CFSTR("public.utf8-plain-text"), "report final.pdf"}}
+  );
+
+  OSXClipboard clipboard;
+  QVERIFY(clipboard.has(IClipboard::Format::FileList));
+  const auto list = deskflow::filetransfer::FileList::fromJson(clipboard.get(IClipboard::Format::FileList));
+  QVERIFY(list.has_value());
+  QCOMPARE(list->sourceOs, std::string("macos"));
+  QCOMPARE(list->items.size(), size_t(1));
+  QCOMPARE(list->items[0].name, std::string("report final.pdf"));
+  QCOMPARE(list->items[0].size, uint64_t(5));
+  QVERIFY(!list->items[0].isDirectory);
 }
 
 QTEST_MAIN(OSXClipboardTests)
