@@ -19,6 +19,7 @@
 
 #if defined(Q_OS_WIN)
 #include "arch/win32/ArchMiscWindows.h"
+#include "platform/MSWindowsFileClipboard.h"
 #endif
 
 #include <QApplication>
@@ -26,6 +27,8 @@
 #include <QSharedMemory>
 #include <QTextStream>
 #include <QThread>
+
+#include <cstring>
 
 void qtMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
@@ -70,6 +73,10 @@ App *createApp(const CoreArgParser &parser, EventQueue &events, const QString &p
 int main(int argc, char **argv)
 {
 #if defined(Q_OS_WIN)
+  // the core running as SYSTEM starts a copy of itself as the signed-in user for this
+  if (argc == 2 && strcmp(argv[1], MSWindowsFileClipboard::kPrintCopiedFilesArg) == 0) {
+    return MSWindowsFileClipboard::printCopiedFiles();
+  }
   ArchMiscWindows::setInstanceWin32(GetModuleHandle(nullptr));
 #endif
 

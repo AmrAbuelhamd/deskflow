@@ -19,7 +19,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -35,6 +37,17 @@ std::wstring widen(const std::string &text)
   const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), nullptr, 0);
   std::wstring result(size, L'\0');
   MultiByteToWideChar(CP_UTF8, 0, text.data(), (int)text.size(), result.data(), size);
+  return result;
+}
+
+std::string narrow(const std::wstring &text)
+{
+  if (text.empty()) {
+    return {};
+  }
+  const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), (int)text.size(), nullptr, 0, nullptr, nullptr);
+  std::string result(size, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, text.data(), (int)text.size(), result.data(), size, nullptr, nullptr);
   return result;
 }
 
@@ -239,22 +252,8 @@ private:
   std::vector<Ref> m_refs;
 };
 
-} // namespace
-
-namespace MSWindowsFileClipboard {
-
-bool hasCopiedFiles()
+std::vector<fs::path> droppedFiles(HDROP drop)
 {
-  return IsClipboardFormatAvailable(CF_HDROP) != 0;
-}
-
-std::string copiedFiles()
-{
-  const auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP));
-  if (drop == nullptr) {
-    return {};
-  }
-
   std::vector<fs::path> files;
   const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
   for (UINT i = 0; i < count; ++i) {
@@ -263,6 +262,199 @@ std::string copiedFiles()
     DragQueryFileW(drop, i, path.data(), length + 1);
     path.resize(length);
     files.emplace_back(path);
+  }
+  return files;
+}
+
+using Handle = std::unique_ptr<void, decltype(&CloseHandle)>;
+
+// Runs this program as the signed-in user to read the files copied in Explorer. Nothing unless
+// this process runs as SYSTEM, as it otherwise sees what the user sees.
+std::optional<std::vector<fs::path>> readAsSignedInUser()
+{
+  DWORD session = 0;
+  HANDLE token = nullptr;
+  if (!ProcessIdToSessionId(GetCurrentProcessId(), &session) || !WTSQueryUserToken(session, &token)) {
+    return std::nullopt;
+  }
+  const Handle tokenHandle(token, &CloseHandle);
+
+  SECURITY_ATTRIBUTES inheritable{sizeof(inheritable), nullptr, TRUE};
+  HANDLE readEnd = nullptr;
+  HANDLE writeEnd = nullptr;
+  if (!CreatePipe(&readEnd, &writeEnd, &inheritable, 0)) {
+    LOG_WARN("files: can't create a pipe, error=%lu", GetLastError());
+    return std::nullopt;
+  }
+  const Handle readHandle(readEnd, &CloseHandle);
+  Handle writeHandle(writeEnd, &CloseHandle);
+  SetHandleInformation(readEnd, HANDLE_FLAG_INHERIT, 0);
+
+  // the reader inherits the pipe and nothing else, none of the core's connections
+  SIZE_T listSize = 0;
+  InitializeProcThreadAttributeList(nullptr, 1, 0, &listSize);
+  std::vector<char> listBuffer(listSize);
+  auto *list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(listBuffer.data());
+  if (!InitializeProcThreadAttributeList(list, 1, 0, &listSize)) {
+    LOG_WARN("files: can't prepare the clipboard reader, error=%lu", GetLastError());
+    return std::nullopt;
+  }
+  const std::shared_ptr<void> deleteList(nullptr, [list](void *) { DeleteProcThreadAttributeList(list); });
+  if (!UpdateProcThreadAttribute(
+          list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &writeEnd, sizeof(writeEnd), nullptr, nullptr
+      )) {
+    LOG_WARN("files: can't prepare the clipboard reader, error=%lu", GetLastError());
+    return std::nullopt;
+  }
+
+  STARTUPINFOEXW startup{};
+  startup.StartupInfo.cb = sizeof(startup);
+  startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+  startup.StartupInfo.hStdOutput = writeEnd;
+  startup.StartupInfo.lpDesktop = const_cast<wchar_t *>(L"winsta0\\default");
+  startup.lpAttributeList = list;
+
+  wchar_t program[MAX_PATH] = {};
+  if (GetModuleFileNameW(nullptr, program, MAX_PATH) == 0) {
+    return std::nullopt;
+  }
+  std::wstring commandLine = L"\"" + std::wstring(program) + L"\" ";
+  commandLine += widen(MSWindowsFileClipboard::kPrintCopiedFilesArg);
+
+  PROCESS_INFORMATION process{};
+  if (!CreateProcessAsUserW(
+          token, program, commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+          nullptr, nullptr, &startup.StartupInfo, &process
+      )) {
+    LOG_WARN("files: can't read the clipboard as the signed-in user, error=%lu", GetLastError());
+    return std::nullopt;
+  }
+  CloseHandle(process.hThread);
+  const Handle processHandle(process.hProcess, &CloseHandle);
+  writeHandle.reset(); // the reader has its own, so the pipe ends when it exits
+
+  // a few hundred bytes; give up if Explorer doesn't hand the list over
+  std::string output;
+  const auto deadline = GetTickCount64() + 3000;
+  for (;;) {
+    DWORD available = 0;
+    if (!PeekNamedPipe(readEnd, nullptr, 0, nullptr, &available, nullptr)) {
+      break; // the reader exited and everything was read
+    }
+    if (available > 0) {
+      const auto start = output.size();
+      output.resize(start + available);
+      DWORD read = 0;
+      if (!ReadFile(readEnd, output.data() + start, available, &read, nullptr)) {
+        output.resize(start);
+        break;
+      }
+      output.resize(start + read);
+      continue;
+    }
+    if (GetTickCount64() > deadline) {
+      TerminateProcess(process.hProcess, 1);
+      LOG_WARN("files: reading the clipboard as the signed-in user took too long");
+      return std::nullopt;
+    }
+    WaitForSingleObject(process.hProcess, 5);
+  }
+
+  std::vector<fs::path> files;
+  for (size_t start = 0; start < output.size();) {
+    auto end = output.find('\n', start);
+    if (end == std::string::npos) {
+      end = output.size();
+    }
+    if (end > start) {
+      files.emplace_back(widen(output.substr(start, end - start)));
+    }
+    start = end + 1;
+  }
+  return files;
+}
+
+// What the signed-in user's session saw on the clipboard with this sequence number
+struct UserSessionFiles
+{
+  DWORD sequence = 0;
+  std::vector<fs::path> files;
+};
+std::mutex s_userSessionMutex;
+UserSessionFiles s_userSession;
+
+} // namespace
+
+namespace MSWindowsFileClipboard {
+
+int printCopiedFiles()
+{
+  // another program may have the clipboard open for a moment
+  bool opened = false;
+  for (int attempt = 0; attempt < 20 && !(opened = OpenClipboard(nullptr)); ++attempt) {
+    Sleep(10);
+  }
+  if (!opened) {
+    return 1;
+  }
+  std::string output;
+  if (const auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP)); drop != nullptr) {
+    for (const auto &file : droppedFiles(drop)) {
+      output += narrow(file.wstring()) + "\n";
+    }
+  }
+  CloseClipboard();
+
+  DWORD written = 0;
+  WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), output.data(), static_cast<DWORD>(output.size()), &written, nullptr);
+  return 0;
+}
+
+void prepareCopiedFiles()
+{
+  const DWORD sequence = GetClipboardSequenceNumber();
+  {
+    std::scoped_lock lock(s_userSessionMutex);
+    if (s_userSession.sequence == sequence) {
+      return;
+    }
+  }
+
+  // only when nothing here could be sent: an Explorer copy holds no text or pictures
+  static const UINT html = RegisterClipboardFormatW(L"HTML Format");
+  std::vector<fs::path> files;
+  if (!IsClipboardFormatAvailable(CF_HDROP) && !IsClipboardFormatAvailable(CF_UNICODETEXT) &&
+      !IsClipboardFormatAvailable(CF_DIB) && !IsClipboardFormatAvailable(html)) {
+    LOG_DEBUG("files: none visible here (%d formats), asking the signed-in user's session", CountClipboardFormats());
+    if (auto read = readAsSignedInUser(); read.has_value()) {
+      files = std::move(*read);
+      LOG_DEBUG("files: the signed-in user's session sees %zu copied files", files.size());
+    }
+  }
+
+  std::scoped_lock lock(s_userSessionMutex);
+  s_userSession = {sequence, std::move(files)};
+}
+
+bool hasCopiedFiles()
+{
+  if (IsClipboardFormatAvailable(CF_HDROP)) {
+    return true;
+  }
+  std::scoped_lock lock(s_userSessionMutex);
+  return s_userSession.sequence == GetClipboardSequenceNumber() && !s_userSession.files.empty();
+}
+
+std::string copiedFiles()
+{
+  std::vector<fs::path> files;
+  if (const auto drop = static_cast<HDROP>(GetClipboardData(CF_HDROP)); drop != nullptr) {
+    files = droppedFiles(drop);
+  } else {
+    std::scoped_lock lock(s_userSessionMutex);
+    if (s_userSession.sequence == GetClipboardSequenceNumber()) {
+      files = s_userSession.files;
+    }
   }
   if (files.empty()) {
     return {};
