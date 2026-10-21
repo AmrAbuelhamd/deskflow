@@ -12,9 +12,12 @@
 
 #import <AppKit/AppKit.h>
 
+#include <dirent.h>
+#include <fcntl.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #include <chrono>
 #include <filesystem>
@@ -116,6 +119,32 @@ std::optional<fs::path> pathOnShare(const FileList &list, const FileItem &item)
     }
   }
   return std::nullopt;
+}
+
+// macOS only puts a file on the pasteboard for an app that may read it. The first read on a network
+// volume asks the user (Privacy & Security, Files & Folders, Network Volumes), and waits for the answer.
+bool canRead(const fs::path &path, bool isDirectory)
+{
+  if (isDirectory) {
+    DIR *dir = opendir(path.c_str());
+    if (dir != nullptr) {
+      closedir(dir);
+    }
+    return dir != nullptr;
+  }
+  const int file = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+  if (file >= 0) {
+    close(file);
+  }
+  return file >= 0;
+}
+
+// Shares are checked here, never on Deskflow's event thread: they may be slow to answer, and
+// macOS may ask the user first
+dispatch_queue_t shareQueue()
+{
+  static dispatch_queue_t s_queue = dispatch_queue_create("org.deskflow.files", DISPATCH_QUEUE_SERIAL);
+  return s_queue;
 }
 
 void setModified(const fs::path &path, int64_t modified)
@@ -264,50 +293,60 @@ void offerRemoteFiles(const std::string &fileListJson, const std::string &text)
     return;
   }
   auto list = std::make_shared<FileList>(std::move(*parsed));
-
-  // looked up here rather than on the main thread, as a share may take a moment to answer
-  std::vector<std::string> sharedPaths;
-  for (const auto &item : list->items) {
-    const auto path = pathOnShare(*list, item);
-    sharedPaths.push_back(path ? path->string() : std::string());
-  }
   LOG_INFO("files: %zu copied on %s, ready to paste", list->items.size(), list->sourceHost.c_str());
 
   const auto names = text;
-  dispatch_async(dispatch_get_main_queue(), ^{
-    @autoreleasepool {
-      tidyCache(list->offerId);
-
-      NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
-      // also keeps Universal Clipboard from fetching the files to other devices
-      [pasteboard prepareForNewContentsWithOptions:NSPasteboardContentsCurrentHostOnly];
-      [providers() removeAllObjects];
-
-      NSMutableArray *items = [NSMutableArray array];
-      for (size_t i = 0; i < list->items.size(); ++i) {
-        NSPasteboardItem *item = [[[NSPasteboardItem alloc] init] autorelease];
-        if (!sharedPaths[i].empty()) {
-          NSString *path = [NSString stringWithUTF8String:sharedPaths[i].c_str()];
-          [item setString:[NSURL fileURLWithPath:path isDirectory:list->items[i].isDirectory].absoluteString
-                  forType:NSPasteboardTypeFileURL];
-        } else {
-          DeskflowFileProvider *provider = [[[DeskflowFileProvider alloc] initWithList:list item:i] autorelease];
-          [providers() addObject:provider];
-          [item setDataProvider:provider forTypes:@[ NSPasteboardTypeFileURL ]];
-        }
-        // ours, so it isn't read back as a new copy; transient, so clipboard managers leave it alone
-        [item setData:[NSData data] forType:kOwnFilesType];
-        [item setData:[NSData data] forType:kTransientType];
-        if (i == 0 && !names.empty()) {
-          [item setString:[NSString stringWithUTF8String:names.c_str()] forType:NSPasteboardTypeString];
-        }
-        [items addObject:item];
+  dispatch_async(shareQueue(), ^{
+    // items on a share this Mac has mounted, and may read, are pasted from there; others are fetched
+    std::vector<std::string> sharedPaths;
+    for (const auto &item : list->items) {
+      auto path = pathOnShare(*list, item);
+      if (path && !canRead(*path, item.isDirectory)) {
+        LOG_WARN(
+            "files: can't read %s on the share, so it's fetched instead. To paste from the share, allow Deskflow "
+            "to access network volumes in System Settings, Privacy & Security, Files & Folders",
+            item.name.c_str()
+        );
+        path.reset();
       }
-
-      if (![pasteboard writeObjects:items]) {
-        LOG_WARN("files: couldn't write the pasteboard");
-      }
+      sharedPaths.push_back(path ? path->string() : std::string());
     }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      @autoreleasepool {
+        tidyCache(list->offerId);
+
+        NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+        // also keeps Universal Clipboard from fetching the files to other devices
+        [pasteboard prepareForNewContentsWithOptions:NSPasteboardContentsCurrentHostOnly];
+        [providers() removeAllObjects];
+
+        NSMutableArray *items = [NSMutableArray array];
+        for (size_t i = 0; i < list->items.size(); ++i) {
+          NSPasteboardItem *item = [[[NSPasteboardItem alloc] init] autorelease];
+          if (!sharedPaths[i].empty()) {
+            NSString *path = [NSString stringWithUTF8String:sharedPaths[i].c_str()];
+            [item setString:[NSURL fileURLWithPath:path isDirectory:list->items[i].isDirectory].absoluteString
+                    forType:NSPasteboardTypeFileURL];
+          } else {
+            DeskflowFileProvider *provider = [[[DeskflowFileProvider alloc] initWithList:list item:i] autorelease];
+            [providers() addObject:provider];
+            [item setDataProvider:provider forTypes:@[ NSPasteboardTypeFileURL ]];
+          }
+          // ours, so it isn't read back as a new copy; transient, so clipboard managers leave it alone
+          [item setData:[NSData data] forType:kOwnFilesType];
+          [item setData:[NSData data] forType:kTransientType];
+          if (i == 0 && !names.empty()) {
+            [item setString:[NSString stringWithUTF8String:names.c_str()] forType:NSPasteboardTypeString];
+          }
+          [items addObject:item];
+        }
+
+        if (![pasteboard writeObjects:items]) {
+          LOG_WARN("files: couldn't write the pasteboard");
+        }
+      }
+    });
   });
 }
 
