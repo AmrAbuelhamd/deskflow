@@ -26,7 +26,6 @@
 namespace {
 
 constexpr UINT kSetFilesMessage = WM_APP + 1;
-constexpr auto kSelfTestText = "deskflow-selftest:virtual-file";
 constexpr int64_t kUnixToFileTimeSeconds = 11644473600LL;
 
 struct SetFilesRequest
@@ -130,7 +129,7 @@ void initComSecurity()
   });
 }
 
-//! Files held in memory, for the test hook
+//! Files held in memory, for tests
 class MemorySource : public VirtualFileSource
 {
 public:
@@ -661,11 +660,6 @@ MSWindowsVirtualFiles &MSWindowsVirtualFiles::instance()
 void MSWindowsVirtualFiles::initializeComSecurity()
 {
   initComSecurity();
-}
-
-bool MSWindowsVirtualFiles::isSelfTestRequest(const std::string &text)
-{
-  return text == kSelfTestText;
 }
 
 IDataObject *MSWindowsVirtualFiles::createDataObject(std::shared_ptr<VirtualFileSource> source, const std::wstring &text)

@@ -116,18 +116,7 @@ jobs:
           cd dist
           sha256sum deskflow-* > sums.txt
           cd ..
-          {
-            echo "Based on upstream Deskflow [${BASE#v}](https://github.com/deskflow/deskflow/releases/tag/${BASE})."
-            echo
-            echo "### Changes on top of upstream"
-            git log --no-merges --format='- %s (%h)' "${BASE}..${SHA}"
-            echo
-            echo "### Install"
-            echo "- macOS (Apple silicon): \`deskflow-*-macos-arm64.dmg\`"
-            echo "- Windows (x64): \`deskflow-*-win-x64.msi\`"
-            echo
-            echo "SHA-256 checksums are in \`sums.txt\`."
-          } > notes.md
+          .github/fork/release-notes.sh "$BASE" "$SHA" > notes.md
           cat notes.md
 
       - name: Create the release
