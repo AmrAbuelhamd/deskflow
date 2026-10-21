@@ -64,6 +64,12 @@ public:
   //! Unblocks a receive() waiting on another thread; the connection can't be used afterwards
   void interrupt();
 
+  //! True once the connection failed or was interrupted
+  bool broken() const
+  {
+    return m_broken;
+  }
+
   const std::string &peerName() const
   {
     return m_peerName;

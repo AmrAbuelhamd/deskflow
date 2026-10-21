@@ -49,6 +49,10 @@ private:
   friend class FileService;
   RemoteFile(FileService &service, std::string peer, std::unique_ptr<TlsChannel> channel);
 
+  bool start(const std::string &request);
+  bool take(Frame frame);
+  void letGo(bool reusable);
+
   FileService &m_service;
   std::string m_peer;
   std::unique_ptr<TlsChannel> m_channel;
@@ -103,8 +107,8 @@ public:
   std::unique_ptr<RemoteFile>
   open(const FileList &list, size_t item, const std::string &relativePath, uint64_t offset, std::string &error);
 
-  //! Called on the serving thread before a file is opened for the other computer, e.g. to act as
-  //! the signed-in user; what it returns is kept until the file is closed
+  //! Called on the serving thread before a file is opened or a folder listed for the other
+  //! computer, e.g. to act as the signed-in user; what it returns is kept until that's done
   using AccessGuard = std::function<std::shared_ptr<void>()>;
   void setAccessGuard(AccessGuard guard);
 
@@ -135,8 +139,12 @@ private:
   bool serveList(TlsChannel &channel, const std::string &offerId, uint32_t item);
   bool serveRead(TlsChannel &channel, const std::string &offerId, uint32_t item, const std::string &path, uint64_t offset);
 
+  std::shared_ptr<void> actAsUser() const;
+
   std::unique_ptr<TlsChannel> acquire(const std::string &peer, bool &reused, std::string &error);
   void release(const std::string &peer, std::unique_ptr<TlsChannel> channel);
+  void track(TlsChannel *channel);
+  void untrack(TlsChannel *channel);
 
   mutable std::mutex m_mutex;
   bool m_server = false;
@@ -156,6 +164,7 @@ private:
   TlsChannel *m_clientControl = nullptr;
   std::atomic<int> m_workers{0};
   std::set<TlsChannel *> m_serving;
+  std::set<TlsChannel *> m_fetching; // waiting on the other computer, so stop() can interrupt them
 
   std::map<std::string, std::shared_ptr<Control>> m_controls;
   std::map<uint32_t, std::promise<std::unique_ptr<TlsChannel>>> m_pendingDials;
