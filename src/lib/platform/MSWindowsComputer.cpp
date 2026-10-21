@@ -472,6 +472,8 @@ void *MSWindowsComputer::getEventTarget() const
 
 bool MSWindowsComputer::getClipboard(ClipboardID, IClipboard *dst) const
 {
+  // before opening the clipboard, which would keep the user's session from reading it
+  MSWindowsFileClipboard::prepareCopiedFiles();
   MSWindowsClipboard src(m_window);
   Clipboard::copy(dst, &src);
   return true;
