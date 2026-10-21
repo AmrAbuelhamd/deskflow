@@ -84,6 +84,7 @@ private:
   SSL *m_ssl;
   std::string m_peerName;
   std::atomic<bool> m_broken{false};
+  std::atomic<bool> m_socketClosed{false};
 };
 
 //! Accepts connections on a port

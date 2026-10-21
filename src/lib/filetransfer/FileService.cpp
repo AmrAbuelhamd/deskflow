@@ -199,6 +199,7 @@ void FileService::startClient(
   }
   stop();
 
+  uint64_t generation = 0;
   {
     std::scoped_lock lock(m_mutex);
     m_stopping = false;
@@ -208,8 +209,19 @@ void FileService::startClient(
     m_port = port;
     m_token = token;
     m_name = computerName;
+    generation = ++m_generation;
   }
-  m_controlThread = std::thread([this] { clientControlLoop(); });
+  // not joined: stopping must never wait for a connection attempt, as it runs on Deskflow's event thread
+  ++m_workers;
+  std::thread([this, generation] {
+    clientControlLoop(generation);
+    --m_workers;
+  }).detach();
+}
+
+bool FileService::isCurrent(uint64_t generation) const
+{
+  return !m_stopping && m_generation == generation;
 }
 
 void FileService::stop()
@@ -221,6 +233,7 @@ void FileService::stop()
       return;
     }
     m_stopping = true;
+    ++m_generation;
     if (m_clientControl != nullptr) {
       m_clientControl->interrupt();
     }
@@ -242,11 +255,9 @@ void FileService::stop()
     control->wake.notify_all();
   }
 
+  // returns within one poll interval
   if (m_acceptThread.joinable()) {
     m_acceptThread.join();
-  }
-  if (m_controlThread.joinable()) {
-    m_controlThread.join();
   }
 
   std::scoped_lock lock(m_mutex);
@@ -472,11 +483,11 @@ bool FileService::hello(TlsChannel &channel, wire::Role role, uint32_t requestId
   return true;
 }
 
-void FileService::clientControlLoop()
+void FileService::clientControlLoop(uint64_t generation)
 {
   auto wait = 1s;
   std::string lastError;
-  while (!m_stopping) {
+  while (isCurrent(generation)) {
     TlsSettings tls;
     std::string host;
     uint16_t port = 0;
@@ -489,6 +500,9 @@ void FileService::clientControlLoop()
 
     std::string error;
     auto channel = TlsChannel::connect(host, port, tls, error);
+    if (!isCurrent(generation)) {
+      return; // stopped or restarted while connecting
+    }
     if (channel && hello(*channel, wire::Role::Control, 0, error)) {
       wait = 1s;
       lastError.clear();
@@ -496,10 +510,13 @@ void FileService::clientControlLoop()
       channel->setTimeouts(kControlReceiveMs, kPongTimeoutMs);
       {
         std::scoped_lock lock(m_mutex);
+        if (!isCurrent(generation)) {
+          return;
+        }
         m_clientControl = channel.get();
       }
 
-      while (!m_stopping) {
+      while (isCurrent(generation)) {
         const auto frame = channel->receive();
         if (!frame) {
           break;
@@ -525,9 +542,11 @@ void FileService::clientControlLoop()
 
       {
         std::scoped_lock lock(m_mutex);
-        m_clientControl = nullptr;
+        if (m_clientControl == channel.get()) {
+          m_clientControl = nullptr;
+        }
       }
-      if (!m_stopping) {
+      if (isCurrent(generation)) {
         LOG_INFO("file connection: lost, reconnecting");
       }
     } else if (error != lastError) {
@@ -536,7 +555,7 @@ void FileService::clientControlLoop()
     }
 
     std::unique_lock lock(m_mutex);
-    m_stopWake.wait_for(lock, wait, [this] { return m_stopping.load(); });
+    m_stopWake.wait_for(lock, wait, [this, generation] { return !isCurrent(generation); });
     wait = std::min(wait * 2, std::chrono::seconds(30));
   }
 }

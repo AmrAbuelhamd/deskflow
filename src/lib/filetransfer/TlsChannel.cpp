@@ -194,7 +194,9 @@ TlsChannel::~TlsChannel()
   if (m_context != nullptr) {
     SSL_CTX_free(m_context);
   }
-  closeSocket(handle(m_socket));
+  if (!m_socketClosed.exchange(true)) {
+    closeSocket(handle(m_socket));
+  }
 }
 
 std::unique_ptr<TlsChannel> TlsChannel::handshake(
@@ -303,7 +305,12 @@ void TlsChannel::interrupt()
 {
   m_broken = true;
 #if defined(_WIN32)
-  shutdown(handle(m_socket), SD_BOTH);
+  // On Windows, shutdown() doesn't wake a thread blocked in recv() on the socket; closing it does.
+  // The owning thread then only sees failed reads, and the destructor doesn't close it again.
+  if (!m_socketClosed.exchange(true)) {
+    shutdown(handle(m_socket), SD_BOTH);
+    closeSocket(handle(m_socket));
+  }
 #else
   shutdown(handle(m_socket), SHUT_RDWR);
 #endif
