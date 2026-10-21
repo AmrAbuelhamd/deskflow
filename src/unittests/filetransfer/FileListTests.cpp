@@ -73,6 +73,9 @@ void FileListTests::rejectsMalformedLists()
   QVERIFY(!FileList::fromJson(R"({"v":1,"offer":"abc","items":[]})").has_value());
   QVERIFY(!FileList::fromJson(R"({"v":0,"offer":"abc","items":[{"name":"a"}]})").has_value());
   QVERIFY(!FileList::fromJson(R"({"v":1,"offer":"","items":[{"name":"a"}]})").has_value());
+  // the Mac names a folder after the offer id, so it can't be a path
+  QVERIFY(!FileList::fromJson(R"({"v":1,"offer":"../../Documents","items":[{"name":"a"}]})").has_value());
+  QVERIFY(!FileList::fromJson(R"({"v":1,"offer":"abc/def","items":[{"name":"a"}]})").has_value());
   QVERIFY(!FileList::fromJson(R"({"v":1,"offer":"abc","items":[{"name":"a","size":-1}]})").has_value());
 }
 
