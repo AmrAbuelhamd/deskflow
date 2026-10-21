@@ -16,15 +16,31 @@ app="/Applications/Deskflow.app"
 keep="$HOME/Library/Caches/deskflow-update"
 previous="$keep/Deskflow-previous.app"
 
+deskflow_running() {
+  pgrep -xq Deskflow || pgrep -xq deskflow-core
+}
+
+wait_for_exit() {
+  for _ in $(seq 1 20); do
+    deskflow_running || return 0
+    sleep 0.5
+  done
+  return 1
+}
+
 quit_deskflow() {
-  if pgrep -xq Deskflow; then
-    echo "Quitting Deskflow..."
-    osascript -e 'quit app "Deskflow"' || true
-    for _ in $(seq 1 20); do
-      pgrep -xq Deskflow || pgrep -xq deskflow-core || break
-      sleep 0.5
-    done
-  fi
+  deskflow_running || return 0
+  echo "Quitting Deskflow..."
+  osascript -e 'quit app "Deskflow"' > /dev/null 2>&1 || true
+  wait_for_exit && return 0
+  # Deskflow can refuse that (error -128) and stay in the menu bar. It quits on
+  # SIGTERM as it does from its menu, stopping deskflow-core with it.
+  pkill -TERM -x Deskflow || true
+  wait_for_exit && return 0
+  pkill -TERM -x deskflow-core || true
+  wait_for_exit && return 0
+  echo "Deskflow is still running. Quit it from its menu bar icon, then run this again." >&2
+  exit 1
 }
 
 if [ "${1:-}" == "--rollback" ]; then
