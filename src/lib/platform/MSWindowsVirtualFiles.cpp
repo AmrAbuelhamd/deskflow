@@ -668,6 +668,11 @@ bool MSWindowsVirtualFiles::isSelfTestRequest(const std::string &text, ComAccess
   return false;
 }
 
+IDataObject *MSWindowsVirtualFiles::createDataObject(std::shared_ptr<VirtualFileSource> source, const std::wstring &text)
+{
+  return static_cast<IDataObject *>(new VirtualFileDataObject(std::move(source), text));
+}
+
 std::shared_ptr<VirtualFileSource>
 MSWindowsVirtualFiles::memorySource(std::vector<std::pair<std::wstring, std::string>> files)
 {

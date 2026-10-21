@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+struct IDataObject;
+
 //! A file or folder in a paste, path relative to the paste target ('\' separated)
 struct VirtualEntry
 {
@@ -73,6 +75,9 @@ public:
 
   //! Makes a file or folder name valid on Windows, replacing characters it doesn't allow
   static std::wstring windowsName(const std::wstring &name);
+
+  //! The clipboard object setFiles() puts on the clipboard, for tests; the caller releases it
+  static IDataObject *createDataObject(std::shared_ptr<VirtualFileSource> source, const std::wstring &text);
 
   MSWindowsVirtualFiles(MSWindowsVirtualFiles const &) = delete;
   MSWindowsVirtualFiles &operator=(MSWindowsVirtualFiles const &) = delete;
