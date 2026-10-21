@@ -61,10 +61,7 @@ public:
   //! Returns at once; the clipboard thread does the rest.
   bool setFiles(std::shared_ptr<VirtualFileSource> source, const std::wstring &text);
 
-  //! Test hook: returns true if text copied on the server asks this client to offer a test file
-  static bool isSelfTestRequest(const std::string &text);
-
-  //! A source holding files in memory, for the test hook
+  //! A source holding files in memory, for tests
   static std::shared_ptr<VirtualFileSource> memorySource(std::vector<std::pair<std::wstring, std::string>> files);
 
   //! Makes a file or folder name valid on Windows, replacing characters it doesn't allow

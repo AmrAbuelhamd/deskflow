@@ -326,7 +326,6 @@ void MSWindowsComputer::leave()
 namespace {
 
 // Files copied on the server become virtual files Explorer can paste, with any text alongside.
-// The test hook text "deskflow-selftest:virtual-file" offers a small test file instead.
 // Returns true if it took over the clipboard.
 bool offerFiles(const IClipboard *src)
 {
@@ -337,26 +336,10 @@ bool offerFiles(const IClipboard *src)
   const auto files = src->has(IClipboard::Format::FileList) ? src->get(IClipboard::Format::FileList) : std::string();
   src->close();
 
-  if (!files.empty()) {
-    return MSWindowsFileClipboard::offerRemoteFiles(files, text);
-  }
-
-  if (!MSWindowsVirtualFiles::isSelfTestRequest(text)) {
+  if (files.empty()) {
     return false;
   }
-  SYSTEMTIME now;
-  GetLocalTime(&now);
-  char created[64];
-  snprintf(
-      created, sizeof(created), "%04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
-      now.wSecond
-  );
-  const std::string content =
-      std::string("Deskflow virtual file test\r\nCreated: ") + created + "\r\nCOM access: interactive users\r\n";
-  LOG_INFO("virtual files: offering a test file");
-  return MSWindowsVirtualFiles::instance().setFiles(
-      MSWindowsVirtualFiles::memorySource({{L"deskflow-selftest.txt", content}}), {}
-  );
+  return MSWindowsFileClipboard::offerRemoteFiles(files, text);
 }
 
 } // namespace
