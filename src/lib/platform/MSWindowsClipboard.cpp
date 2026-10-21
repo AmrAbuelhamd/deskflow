@@ -219,7 +219,17 @@ bool MSWindowsClipboard::isOwnedByDeskflow()
   if (s_ownershipFormat == 0) {
     s_ownershipFormat = RegisterClipboardFormat(TEXT("Deskflow Ownership"));
   }
-  return (IsClipboardFormatAvailable(getOwnershipFormat()) != 0);
+  if (IsClipboardFormatAvailable(getOwnershipFormat()) != 0) {
+    return true;
+  }
+
+  // Deskflow's virtual-file thread may be part-way through putting files on the clipboard,
+  // before the marker is there; its window belongs to this process
+  DWORD process = 0;
+  if (const HWND owner = GetClipboardOwner(); owner != nullptr && GetWindowThreadProcessId(owner, &process) != 0) {
+    return process == GetCurrentProcessId();
+  }
+  return false;
 }
 
 UINT MSWindowsClipboard::getOwnershipFormat()

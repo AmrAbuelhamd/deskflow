@@ -59,7 +59,7 @@ public:
   static MSWindowsVirtualFiles &instance();
 
   //! Replaces the clipboard with the files from `source`, plus `text` (e.g. their names) if not empty.
-  //! COM access is fixed by the first call in the process.
+  //! Returns at once; the clipboard thread does the rest. COM access is fixed by the first call in the process.
   bool setFiles(
       std::shared_ptr<VirtualFileSource> source, const std::wstring &text,
       ComAccess access = ComAccess::InteractiveUsers

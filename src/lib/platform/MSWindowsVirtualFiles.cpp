@@ -35,7 +35,6 @@ struct SetFilesRequest
   std::shared_ptr<VirtualFileSource> source;
   std::wstring text;
   MSWindowsVirtualFiles::ComAccess access;
-  std::promise<bool> done;
 };
 
 std::string narrow(const std::wstring &text)
@@ -771,8 +770,11 @@ void MSWindowsVirtualFiles::run()
       auto *object = new VirtualFileDataObject(std::move(request->source), std::move(request->text));
       const HRESULT hr = OleSetClipboard(static_cast<IDataObject *>(object));
       object->Release();
-      LOG_INFO("virtual files: clipboard set, result=0x%08lx", static_cast<unsigned long>(hr));
-      request->done.set_value(SUCCEEDED(hr));
+      if (FAILED(hr)) {
+        LOG_WARN("virtual files: couldn't set the clipboard, result=0x%08lx", static_cast<unsigned long>(hr));
+      } else {
+        LOG_DEBUG("virtual files: clipboard set");
+      }
       continue;
     }
     TranslateMessage(&msg);
@@ -789,17 +791,13 @@ bool MSWindowsVirtualFiles::setFiles(std::shared_ptr<VirtualFileSource> source, 
     return false;
   }
 
-  auto *request = new SetFilesRequest{std::move(source), text, access, {}};
-  auto done = request->done.get_future();
+  // Never wait for the clipboard thread: taking over the clipboard sends a message to the previous
+  // owner, which may be this thread's own window
+  auto *request = new SetFilesRequest{std::move(source), text, access};
   if (!PostThreadMessageW(m_threadId, kSetFilesMessage, 0, reinterpret_cast<LPARAM>(request))) {
     LOG_ERR("virtual files: failed to reach the clipboard thread, error=%lu", GetLastError());
     delete request;
     return false;
   }
-
-  if (done.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
-    LOG_WARN("virtual files: timed out setting the clipboard");
-    return false;
-  }
-  return done.get();
+  return true;
 }

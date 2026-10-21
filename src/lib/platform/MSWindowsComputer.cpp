@@ -323,25 +323,25 @@ void MSWindowsComputer::leave()
 
 namespace {
 
-// Files copied on the server become virtual files Explorer can paste. The test hook text
-// "deskflow-selftest:virtual-file" offers a small test file instead.
-void offerFiles(const IClipboard *src)
+// Files copied on the server become virtual files Explorer can paste, with any text alongside.
+// The test hook text "deskflow-selftest:virtual-file" offers a small test file instead.
+// Returns true if it took over the clipboard.
+bool offerFiles(const IClipboard *src)
 {
   if (!src->open(0)) {
-    return;
+    return false;
   }
   const auto text = src->has(IClipboard::Format::Text) ? src->get(IClipboard::Format::Text) : std::string();
   const auto files = src->has(IClipboard::Format::FileList) ? src->get(IClipboard::Format::FileList) : std::string();
   src->close();
 
   if (!files.empty()) {
-    MSWindowsFileClipboard::offerRemoteFiles(files, text);
-    return;
+    return MSWindowsFileClipboard::offerRemoteFiles(files, text);
   }
 
   auto access = MSWindowsVirtualFiles::ComAccess::InteractiveUsers;
   if (!MSWindowsVirtualFiles::isSelfTestRequest(text, access)) {
-    return;
+    return false;
   }
   SYSTEMTIME now;
   GetLocalTime(&now);
@@ -354,7 +354,7 @@ void offerFiles(const IClipboard *src)
                               (access == MSWindowsVirtualFiles::ComAccess::Anyone ? "anyone" : "interactive users") +
                               "\r\n";
   LOG_INFO("virtual files: offering a test file");
-  MSWindowsVirtualFiles::instance().setFiles(
+  return MSWindowsVirtualFiles::instance().setFiles(
       MSWindowsVirtualFiles::memorySource({{L"deskflow-selftest.txt", content}}), {}, access
   );
 }
@@ -371,10 +371,12 @@ bool MSWindowsComputer::setClipboard(ClipboardID id, const IClipboard *src)
 
   MSWindowsClipboard dst(m_window);
   if (src != nullptr) {
+    // files and their text go on the clipboard in one go
+    if (offerFiles(src)) {
+      return true;
+    }
     // save clipboard data
-    const bool saved = Clipboard::copy(&dst, src);
-    offerFiles(src);
-    return saved;
+    return Clipboard::copy(&dst, src);
   } else {
     // assert clipboard ownership
     if (!dst.open(0)) {

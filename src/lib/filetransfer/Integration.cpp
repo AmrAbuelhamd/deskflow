@@ -15,9 +15,18 @@ namespace deskflow::filetransfer {
 
 namespace {
 
-const OptionID kOptionFilePort = OPTION_CODE("FXPT");
-const OptionID kOptionFileToken[wire::kTokenWords] = {
-    OPTION_CODE("FXT0"), OPTION_CODE("FXT1"), OPTION_CODE("FXT2"), OPTION_CODE("FXT3")
+// option ids are 4 characters packed into an integer, like the ones in OptionTypes.h
+constexpr OptionID optionCode(const char (&code)[5])
+{
+  return (static_cast<OptionID>(static_cast<unsigned char>(code[0])) << 24) |
+         (static_cast<OptionID>(static_cast<unsigned char>(code[1])) << 16) |
+         (static_cast<OptionID>(static_cast<unsigned char>(code[2])) << 8) |
+         static_cast<OptionID>(static_cast<unsigned char>(code[3]));
+}
+
+constexpr OptionID kOptionFilePort = optionCode("FXPT");
+constexpr OptionID kOptionFileToken[wire::kTokenWords] = {
+    optionCode("FXT0"), optionCode("FXT1"), optionCode("FXT2"), optionCode("FXT3")
 };
 
 TlsSettings tlsSettings(bool server)
