@@ -11,6 +11,8 @@
 #include <QJsonObject>
 #include <QString>
 
+#include <cctype>
+
 namespace deskflow::filetransfer {
 
 namespace {
@@ -32,6 +34,20 @@ bool hasControlCharacters(const std::string &text)
     }
   }
   return false;
+}
+
+// Offer ids are hex digests; the Mac also names a folder after them
+bool isOfferId(const std::string &id)
+{
+  if (id.empty() || id.size() > kMaxIdBytes) {
+    return false;
+  }
+  for (const unsigned char c : id) {
+    if (!isxdigit(c)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 } // namespace
@@ -108,8 +124,7 @@ std::optional<FileList> FileList::fromJson(const std::string &json)
   list.offerId = root.value("offer").toString().toStdString();
   list.sourceOs = root.value("os").toString().toStdString();
   list.sourceHost = root.value("host").toString().toStdString();
-  if (list.offerId.empty() || list.offerId.size() > kMaxIdBytes || hasControlCharacters(list.offerId) ||
-      list.sourceOs.size() > kMaxIdBytes || hasControlCharacters(list.sourceOs) ||
+  if (!isOfferId(list.offerId) || list.sourceOs.size() > kMaxIdBytes || hasControlCharacters(list.sourceOs) ||
       list.sourceHost.size() > kMaxNameBytes || hasControlCharacters(list.sourceHost)) {
     return std::nullopt;
   }
