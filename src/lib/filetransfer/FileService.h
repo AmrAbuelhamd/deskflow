@@ -126,7 +126,8 @@ private:
   void deliverDial(uint32_t id, std::unique_ptr<TlsChannel> channel);
   std::unique_ptr<TlsChannel> dial(const std::string &peer, std::string &error);
 
-  void clientControlLoop();
+  void clientControlLoop(uint64_t generation);
+  bool isCurrent(uint64_t generation) const;
   void answerDial(uint32_t id);
   bool hello(TlsChannel &channel, wire::Role role, uint32_t requestId, std::string &error) const;
 
@@ -151,7 +152,7 @@ private:
   std::condition_variable m_stopWake;
   std::unique_ptr<TlsListener> m_listener;
   std::thread m_acceptThread;
-  std::thread m_controlThread;
+  std::atomic<uint64_t> m_generation{0}; // a stopped client's control thread exits once this moves on
   TlsChannel *m_clientControl = nullptr;
   std::atomic<int> m_workers{0};
   std::set<TlsChannel *> m_serving;
