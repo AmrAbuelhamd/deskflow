@@ -43,6 +43,8 @@ if(WIN32)
     MSWindowsDebugOutputter.h
     MSWindowsDesks.cpp
     MSWindowsDesks.h
+    MSWindowsFileClipboard.cpp
+    MSWindowsFileClipboard.h
     MSWindowsEventQueueBuffer.cpp
     MSWindowsEventQueueBuffer.h
     MSWindowsHook.cpp
@@ -87,6 +89,8 @@ elseif(APPLE)
     OSXCocoaApp.m
     OSXComputer.h
     OSXComputer.mm
+    OSXFileClipboard.h
+    OSXFileClipboard.mm
     OSXEventQueueBuffer.cpp
     OSXEventQueueBuffer.h
     OSXKeyLayoutResource.cpp

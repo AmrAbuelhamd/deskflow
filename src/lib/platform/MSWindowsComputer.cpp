@@ -25,6 +25,7 @@
 #include "platform/MSWindowsClipboard.h"
 #include "platform/MSWindowsDesks.h"
 #include "platform/MSWindowsEventQueueBuffer.h"
+#include "platform/MSWindowsFileClipboard.h"
 #include "platform/MSWindowsKeyState.h"
 #include "platform/MSWindowsScreenSaver.h"
 #include "platform/MSWindowsVirtualFiles.h"
@@ -121,6 +122,8 @@ MSWindowsComputer::MSWindowsComputer(bool isPrimary, bool useHooks, IEventQueue 
     }
 
     OleInitialize(0);
+    // before anything is marshalled, so Explorer may paste files from the other computer
+    MSWindowsVirtualFiles::initializeComSecurity();
   } catch (...) {
     delete m_keyState;
     delete m_desks;
@@ -322,20 +325,25 @@ void MSWindowsComputer::leave()
 
 namespace {
 
-// Test hook for virtual files: copying a special text on the server makes this client offer a test file
-void offerSelfTestFile(const IClipboard *src)
+// Files copied on the server become virtual files Explorer can paste, with any text alongside.
+// The test hook text "deskflow-selftest:virtual-file" offers a small test file instead.
+// Returns true if it took over the clipboard.
+bool offerFiles(const IClipboard *src)
 {
   if (!src->open(0)) {
-    return;
+    return false;
   }
   const auto text = src->has(IClipboard::Format::Text) ? src->get(IClipboard::Format::Text) : std::string();
+  const auto files = src->has(IClipboard::Format::FileList) ? src->get(IClipboard::Format::FileList) : std::string();
   src->close();
 
-  auto access = MSWindowsVirtualFiles::ComAccess::InteractiveUsers;
-  if (!MSWindowsVirtualFiles::isSelfTestRequest(text, access)) {
-    return;
+  if (!files.empty()) {
+    return MSWindowsFileClipboard::offerRemoteFiles(files, text);
   }
 
+  if (!MSWindowsVirtualFiles::isSelfTestRequest(text)) {
+    return false;
+  }
   SYSTEMTIME now;
   GetLocalTime(&now);
   char created[64];
@@ -343,12 +351,12 @@ void offerSelfTestFile(const IClipboard *src)
       created, sizeof(created), "%04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
       now.wSecond
   );
-  const std::string content = std::string("Deskflow virtual file test\r\nCreated: ") + created + "\r\nCOM access: " +
-                              (access == MSWindowsVirtualFiles::ComAccess::Anyone ? "anyone" : "interactive users") +
-                              "\r\n";
-
+  const std::string content =
+      std::string("Deskflow virtual file test\r\nCreated: ") + created + "\r\nCOM access: interactive users\r\n";
   LOG_INFO("virtual files: offering a test file");
-  MSWindowsVirtualFiles::instance().setFiles({{L"deskflow-selftest.txt", content}}, access);
+  return MSWindowsVirtualFiles::instance().setFiles(
+      MSWindowsVirtualFiles::memorySource({{L"deskflow-selftest.txt", content}}), {}
+  );
 }
 
 } // namespace
@@ -363,10 +371,12 @@ bool MSWindowsComputer::setClipboard(ClipboardID id, const IClipboard *src)
 
   MSWindowsClipboard dst(m_window);
   if (src != nullptr) {
+    // files and their text go on the clipboard in one go
+    if (offerFiles(src)) {
+      return true;
+    }
     // save clipboard data
-    const bool saved = Clipboard::copy(&dst, src);
-    offerSelfTestFile(src);
-    return saved;
+    return Clipboard::copy(&dst, src);
   } else {
     // assert clipboard ownership
     if (!dst.open(0)) {

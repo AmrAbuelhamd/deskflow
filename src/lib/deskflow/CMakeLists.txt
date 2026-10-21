@@ -92,6 +92,7 @@ add_library(${lib_name} STATIC ${PLATFORM_CODE}
 target_link_libraries(${lib_name}
   PUBLIC
     common
+    filetransfer
     Qt6::Network
   PRIVATE
     platform
