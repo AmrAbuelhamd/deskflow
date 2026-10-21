@@ -30,6 +30,8 @@ constexpr int kServeIdleMs = 60000;
 constexpr auto kDialTimeout = 10s;
 constexpr size_t kMaxIdlePerPeer = 4;
 constexpr auto kMaxIdleAge = 30s; // well under the serving side's idle timeout
+constexpr size_t kMaxListEntries = 200000;
+constexpr size_t kMaxListBytes = 64 * 1024 * 1024;
 
 std::string failure(const Frame &frame)
 {
@@ -50,11 +52,67 @@ RemoteFile::RemoteFile(FileService &service, std::string peer, std::unique_ptr<T
       m_peer(std::move(peer)),
       m_channel(std::move(channel))
 {
+  m_service.track(m_channel.get());
 }
 
 RemoteFile::~RemoteFile()
 {
   // a channel left mid-file can't be reused; it closes with this object
+  letGo(false);
+}
+
+// Gives the channel back for reuse, or closes it
+void RemoteFile::letGo(bool reusable)
+{
+  if (m_channel == nullptr) {
+    return;
+  }
+  if (reusable) {
+    m_service.release(m_peer, std::move(m_channel));
+  } else {
+    m_service.untrack(m_channel.get());
+    m_channel.reset();
+  }
+}
+
+// Sends the request and waits for the reply to start, so that a reused connection the other side
+// has closed shows up now, while another one can still be tried
+bool RemoteFile::start(const std::string &request)
+{
+  if (!m_channel->send(wire::Type::Read, request)) {
+    letGo(false);
+    return false;
+  }
+  auto frame = m_channel->receive();
+  if (!frame) {
+    letGo(false);
+    return false;
+  }
+  take(std::move(*frame)); // a refusal is reported by read()
+  return true;
+}
+
+// Handles a frame of the reply; false if the read failed
+bool RemoteFile::take(Frame frame)
+{
+  switch (frame.type) {
+  case wire::Type::Data:
+    m_chunk = std::move(frame.payload);
+    m_chunkOffset = 0;
+    return true;
+  case wire::Type::ReadEnd:
+    m_done = true;
+    letGo(true);
+    return true;
+  case wire::Type::Failed:
+    m_error = failure(frame);
+    letGo(true);
+    return false;
+  default:
+    m_error = "unexpected reply";
+    letGo(false);
+    return false;
+  }
 }
 
 bool RemoteFile::read(char *buffer, size_t size, size_t &count)
@@ -62,10 +120,10 @@ bool RemoteFile::read(char *buffer, size_t size, size_t &count)
   count = 0;
   while (count < size) {
     if (m_chunkOffset < m_chunk.size()) {
-      const auto take = std::min(size - count, m_chunk.size() - m_chunkOffset);
-      std::copy_n(m_chunk.data() + m_chunkOffset, take, buffer + count);
-      m_chunkOffset += take;
-      count += take;
+      const auto part = std::min(size - count, m_chunk.size() - m_chunkOffset);
+      std::copy_n(m_chunk.data() + m_chunkOffset, part, buffer + count);
+      m_chunkOffset += part;
+      count += part;
       continue;
     }
     if (m_done) {
@@ -78,24 +136,10 @@ bool RemoteFile::read(char *buffer, size_t size, size_t &count)
     auto frame = m_channel->receive();
     if (!frame) {
       m_error = "the connection was lost";
+      letGo(false);
       return false;
     }
-    switch (frame->type) {
-    case wire::Type::Data:
-      m_chunk = std::move(frame->payload);
-      m_chunkOffset = 0;
-      break;
-    case wire::Type::ReadEnd:
-      m_done = true;
-      m_service.release(m_peer, std::move(m_channel));
-      break;
-    case wire::Type::Failed:
-      m_error = failure(*frame);
-      m_service.release(m_peer, std::move(m_channel));
-      return false;
-    default:
-      m_error = "unexpected reply";
-      m_channel.reset();
+    if (!take(std::move(*frame))) {
       return false;
     }
   }
@@ -241,6 +285,9 @@ void FileService::stop()
       controls.push_back(control);
     }
     for (auto *channel : m_serving) {
+      channel->interrupt();
+    }
+    for (auto *channel : m_fetching) {
       channel->interrupt();
     }
     m_idle.clear();
@@ -636,6 +683,8 @@ void FileService::serve(TlsChannel &channel)
 
 bool FileService::serveList(TlsChannel &channel, const std::string &offerId, uint32_t item)
 {
+  // folders are listed with the same rights as files are read with
+  const auto access = actAsUser();
   bool sent = true;
   std::string error;
   const bool listed = Offers::instance().list(
@@ -661,17 +710,11 @@ bool FileService::serveRead(
     TlsChannel &channel, const std::string &offerId, uint32_t item, const std::string &path, uint64_t offset
 )
 {
+  const auto access = actAsUser();
   const auto local = Offers::instance().resolve(offerId, item, path);
   if (!local) {
     return channel.send(wire::Type::Failed, wire::Writer().str("not offered").data());
   }
-
-  AccessGuard guard;
-  {
-    std::scoped_lock lock(m_mutex);
-    guard = m_guard;
-  }
-  const auto access = guard ? guard() : nullptr;
 
   std::ifstream file(*local, std::ios::binary);
   if (!file) {
@@ -698,6 +741,16 @@ bool FileService::serveRead(
     return channel.send(wire::Type::Failed, wire::Writer().str("can't read " + toUtf8(local->filename())).data());
   }
   return channel.send(wire::Type::ReadEnd, wire::Writer().u64(total).data());
+}
+
+std::shared_ptr<void> FileService::actAsUser() const
+{
+  AccessGuard guard;
+  {
+    std::scoped_lock lock(m_mutex);
+    guard = m_guard;
+  }
+  return guard ? guard() : nullptr;
 }
 
 //
@@ -754,9 +807,25 @@ void FileService::release(const std::string &peer, std::unique_ptr<TlsChannel> c
     return;
   }
   std::scoped_lock lock(m_mutex);
-  if (!m_stopping && m_idle.count(peer) < kMaxIdlePerPeer) {
+  m_fetching.erase(channel.get());
+  if (!m_stopping && !channel->broken() && m_idle.count(peer) < kMaxIdlePerPeer) {
     m_idle.emplace(peer, Idle{std::move(channel), std::chrono::steady_clock::now()});
   }
+}
+
+void FileService::track(TlsChannel *channel)
+{
+  std::scoped_lock lock(m_mutex);
+  m_fetching.insert(channel);
+  if (m_stopping) {
+    channel->interrupt(); // stopped while it was being set up
+  }
+}
+
+void FileService::untrack(TlsChannel *channel)
+{
+  std::scoped_lock lock(m_mutex);
+  m_fetching.erase(channel);
 }
 
 bool FileService::list(const FileList &list, size_t item, std::vector<Entry> &entries, std::string &error)
@@ -770,8 +839,16 @@ bool FileService::list(const FileList &list, size_t item, std::vector<Entry> &en
     if (!channel) {
       return false;
     }
+    // stop() may interrupt it until it's given back, or closed below
+    track(channel.get());
+    const auto untrackLater = std::shared_ptr<void>(nullptr, [this, &channel](void *) {
+      if (channel != nullptr) {
+        untrack(channel.get());
+      }
+    });
 
     entries.clear();
+    size_t listedBytes = 0;
     bool lost = !channel->send(wire::Type::List, request);
     while (!lost) {
       const auto frame = channel->receive();
@@ -790,6 +867,11 @@ bool FileService::list(const FileList &list, size_t item, std::vector<Entry> &en
           return false;
         }
         entry.isDirectory = isDirectory != 0;
+        listedBytes += entry.relativePath.size();
+        if (entries.size() >= kMaxListEntries || listedBytes > kMaxListBytes) {
+          error = "too many files to copy";
+          return false;
+        }
         entries.push_back(std::move(entry));
       } else if (frame->type == wire::Type::ListEnd) {
         release(list.sourceHost, std::move(channel));
@@ -833,8 +915,9 @@ std::unique_ptr<RemoteFile> FileService::open(
     if (!channel) {
       return nullptr;
     }
-    if (channel->send(wire::Type::Read, request)) {
-      return std::unique_ptr<RemoteFile>(new RemoteFile(*this, list.sourceHost, std::move(channel)));
+    std::unique_ptr<RemoteFile> file(new RemoteFile(*this, list.sourceHost, std::move(channel)));
+    if (file->start(request)) {
+      return file;
     }
     if (!reused) {
       break;

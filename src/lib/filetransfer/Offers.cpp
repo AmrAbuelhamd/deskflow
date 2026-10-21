@@ -47,6 +47,17 @@ std::optional<Entry> statEntry(const fs::path &path)
   return entry;
 }
 
+namespace {
+
+// Links, and junctions on Windows, inside an offered folder could lead out of it, so only plain
+// folders and files are followed
+bool isPlain(fs::file_type type)
+{
+  return type == fs::file_type::directory || type == fs::file_type::regular;
+}
+
+} // namespace
+
 Offers &Offers::instance()
 {
   static Offers s_instance;
@@ -135,7 +146,8 @@ Offers::resolve(const std::string &offerId, size_t item, const std::string &rela
   auto current = *path;
   for (const auto &part : fromUtf8(relativePath)) {
     current /= part;
-    if (fs::is_symlink(fs::symlink_status(current, error))) {
+    const auto type = fs::symlink_status(current, error).type();
+    if (!isPlain(type) && type != fs::file_type::not_found) {
       return std::nullopt;
     }
   }
@@ -171,7 +183,7 @@ bool Offers::list(
       error = "can't read the folder: " + code.message();
       return false;
     }
-    if (it->is_symlink(code)) {
+    if (!isPlain(it->symlink_status(code).type())) {
       it.disable_recursion_pending();
       continue;
     }

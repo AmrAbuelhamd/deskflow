@@ -156,8 +156,13 @@ void FileServiceTests::offersResolveStaysInside()
 
 void FileServiceTests::offersListParentsFirst()
 {
-  const auto list =
-      Offers::instance().publish({fromUtf8(path("offered/folder").toStdString())}, "macos", "server");
+  const auto folder = fromUtf8(path("offered/folder").toStdString());
+  const auto list = Offers::instance().publish({folder}, "macos", "server");
+
+  // a link inside the folder isn't followed out of it, nor listed
+  std::error_code linkError;
+  fs::create_directory_symlink(fromUtf8(m_dir.path().toStdString()), folder / "outside", linkError);
+
   std::vector<std::string> paths;
   std::string error;
   QVERIFY(Offers::instance().list(
@@ -169,6 +174,10 @@ void FileServiceTests::offersListParentsFirst()
       error
   ));
   QCOMPARE(paths, (std::vector<std::string>{"", "sub", "sub/big.bin"}));
+  if (!linkError) {
+    QVERIFY(!Offers::instance().resolve(list.offerId, 0, "outside/secret.txt").has_value());
+    fs::remove(folder / "outside");
+  }
 }
 
 void FileServiceTests::clientFetchesFromServer()
