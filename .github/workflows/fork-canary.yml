@@ -51,6 +51,9 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # the fork's README replaces upstream's, so upstream's edits to it never conflict
+          echo "/.github/README.md merge=ours" >> .git/info/attributes
+          git config merge.ours.driver true
           git switch -c canary/upstream-master
 
           if git merge --no-ff --no-edit -m "Test-merge upstream master $upstream" upstream/master; then
