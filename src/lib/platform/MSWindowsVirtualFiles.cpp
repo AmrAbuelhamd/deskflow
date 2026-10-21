@@ -27,14 +27,12 @@ namespace {
 
 constexpr UINT kSetFilesMessage = WM_APP + 1;
 constexpr auto kSelfTestText = "deskflow-selftest:virtual-file";
-constexpr auto kSelfTestTextOpen = "deskflow-selftest:virtual-file:open";
 constexpr int64_t kUnixToFileTimeSeconds = 11644473600LL;
 
 struct SetFilesRequest
 {
   std::shared_ptr<VirtualFileSource> source;
   std::wstring text;
-  MSWindowsVirtualFiles::ComAccess access;
 };
 
 std::string narrow(const std::wstring &text)
@@ -73,7 +71,12 @@ HRESULT putGlobal(const void *data, size_t size, STGMEDIUM *medium)
     return E_OUTOFMEMORY;
   }
   if (size > 0) {
-    memcpy(GlobalLock(global), data, size);
+    void *target = GlobalLock(global);
+    if (target == nullptr) {
+      GlobalFree(global);
+      return E_OUTOFMEMORY;
+    }
+    memcpy(target, data, size);
     GlobalUnlock(global);
   }
   medium->tymed = TYMED_HGLOBAL;
@@ -83,19 +86,10 @@ HRESULT putGlobal(const void *data, size_t size, STGMEDIUM *medium)
 }
 
 // COM security is process-wide and can only be set once, before anything is marshalled.
-void initComSecurity(MSWindowsVirtualFiles::ComAccess access)
+void initComSecurity()
 {
   static std::once_flag once;
-  std::call_once(once, [access] {
-    HRESULT hr = E_FAIL;
-    if (access == MSWindowsVirtualFiles::ComAccess::Anyone) {
-      hr = CoInitializeSecurity(
-          nullptr, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_NONE, RPC_C_IMP_LEVEL_IDENTIFY, nullptr, EOAC_NONE, nullptr
-      );
-      LOG_INFO("virtual files: COM access for anyone, result=0x%08lx", static_cast<unsigned long>(hr));
-      return;
-    }
-
+  std::call_once(once, [] {
     // COM wants an absolute security descriptor, which also has to stay valid while the process runs.
     // Explorer runs as the signed-in user at medium integrity, so allow interactive users at that level.
     PSECURITY_DESCRIPTOR relative = nullptr;
@@ -124,10 +118,15 @@ void initComSecurity(MSWindowsVirtualFiles::ComAccess access)
       return;
     }
 
-    hr = CoInitializeSecurity(
+    const HRESULT hr = CoInitializeSecurity(
         sd.data(), -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IDENTIFY, nullptr, EOAC_NONE, nullptr
     );
-    LOG_INFO("virtual files: COM access for interactive users, result=0x%08lx", static_cast<unsigned long>(hr));
+    if (FAILED(hr)) {
+      // e.g. RPC_E_TOO_LATE: Explorer may then be refused when it pastes files from the other computer
+      LOG_WARN("virtual files: couldn't set COM access, result=0x%08lx", static_cast<unsigned long>(hr));
+    } else {
+      LOG_DEBUG("virtual files: COM access for interactive users");
+    }
   });
 }
 
@@ -589,6 +588,10 @@ private:
     }
 
     auto *group = static_cast<FILEGROUPDESCRIPTORW *>(GlobalLock(global));
+    if (group == nullptr) {
+      GlobalFree(global);
+      return E_OUTOFMEMORY;
+    }
     group->cItems = static_cast<UINT>(count);
     for (size_t i = 0; i < count; ++i) {
       const auto &entry = m_entries[i];
@@ -655,17 +658,14 @@ MSWindowsVirtualFiles &MSWindowsVirtualFiles::instance()
   return *s_instance;
 }
 
-bool MSWindowsVirtualFiles::isSelfTestRequest(const std::string &text, ComAccess &access)
+void MSWindowsVirtualFiles::initializeComSecurity()
 {
-  if (text == kSelfTestTextOpen) {
-    access = ComAccess::Anyone;
-    return true;
-  }
-  if (text == kSelfTestText) {
-    access = ComAccess::InteractiveUsers;
-    return true;
-  }
-  return false;
+  initComSecurity();
+}
+
+bool MSWindowsVirtualFiles::isSelfTestRequest(const std::string &text)
+{
+  return text == kSelfTestText;
 }
 
 IDataObject *MSWindowsVirtualFiles::createDataObject(std::shared_ptr<VirtualFileSource> source, const std::wstring &text)
@@ -770,7 +770,7 @@ void MSWindowsVirtualFiles::run()
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     if (msg.hwnd == nullptr && msg.message == kSetFilesMessage) {
       std::unique_ptr<SetFilesRequest> request(reinterpret_cast<SetFilesRequest *>(msg.lParam));
-      initComSecurity(request->access);
+      initComSecurity(); // done at startup already, unless this process skipped that
 
       auto *object = new VirtualFileDataObject(std::move(request->source), std::move(request->text));
       const HRESULT hr = OleSetClipboard(static_cast<IDataObject *>(object));
@@ -789,7 +789,7 @@ void MSWindowsVirtualFiles::run()
   OleUninitialize();
 }
 
-bool MSWindowsVirtualFiles::setFiles(std::shared_ptr<VirtualFileSource> source, const std::wstring &text, ComAccess access)
+bool MSWindowsVirtualFiles::setFiles(std::shared_ptr<VirtualFileSource> source, const std::wstring &text)
 {
   if (!start()) {
     LOG_ERR("virtual files: failed to start the clipboard thread");
@@ -798,7 +798,7 @@ bool MSWindowsVirtualFiles::setFiles(std::shared_ptr<VirtualFileSource> source, 
 
   // Never wait for the clipboard thread: taking over the clipboard sends a message to the previous
   // owner, which may be this thread's own window
-  auto *request = new SetFilesRequest{std::move(source), text, access};
+  auto *request = new SetFilesRequest{std::move(source), text};
   if (!PostThreadMessageW(m_threadId, kSetFilesMessage, 0, reinterpret_cast<LPARAM>(request))) {
     LOG_ERR("virtual files: failed to reach the clipboard thread, error=%lu", GetLastError());
     delete request;

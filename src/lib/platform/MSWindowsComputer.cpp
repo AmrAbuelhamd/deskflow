@@ -122,6 +122,8 @@ MSWindowsComputer::MSWindowsComputer(bool isPrimary, bool useHooks, IEventQueue 
     }
 
     OleInitialize(0);
+    // before anything is marshalled, so Explorer may paste files from the other computer
+    MSWindowsVirtualFiles::initializeComSecurity();
   } catch (...) {
     delete m_keyState;
     delete m_desks;
@@ -339,8 +341,7 @@ bool offerFiles(const IClipboard *src)
     return MSWindowsFileClipboard::offerRemoteFiles(files, text);
   }
 
-  auto access = MSWindowsVirtualFiles::ComAccess::InteractiveUsers;
-  if (!MSWindowsVirtualFiles::isSelfTestRequest(text, access)) {
+  if (!MSWindowsVirtualFiles::isSelfTestRequest(text)) {
     return false;
   }
   SYSTEMTIME now;
@@ -350,12 +351,11 @@ bool offerFiles(const IClipboard *src)
       created, sizeof(created), "%04u-%02u-%02u %02u:%02u:%02u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
       now.wSecond
   );
-  const std::string content = std::string("Deskflow virtual file test\r\nCreated: ") + created + "\r\nCOM access: " +
-                              (access == MSWindowsVirtualFiles::ComAccess::Anyone ? "anyone" : "interactive users") +
-                              "\r\n";
+  const std::string content =
+      std::string("Deskflow virtual file test\r\nCreated: ") + created + "\r\nCOM access: interactive users\r\n";
   LOG_INFO("virtual files: offering a test file");
   return MSWindowsVirtualFiles::instance().setFiles(
-      MSWindowsVirtualFiles::memorySource({{L"deskflow-selftest.txt", content}}), {}, access
+      MSWindowsVirtualFiles::memorySource({{L"deskflow-selftest.txt", content}}), {}
   );
 }
 

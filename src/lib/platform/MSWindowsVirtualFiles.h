@@ -50,25 +50,19 @@ public:
 class MSWindowsVirtualFiles
 {
 public:
-  //! How COM decides which processes may call the clipboard object.
-  //! The core may run as SYSTEM while Explorer runs as the signed-in user.
-  enum class ComAccess
-  {
-    InteractiveUsers, //!< SYSTEM, administrators and interactive users, at medium integrity or above
-    Anyone            //!< no access check
-  };
-
   static MSWindowsVirtualFiles &instance();
 
+  //! Lets the signed-in user's Explorer call the clipboard object when the core runs as SYSTEM:
+  //! SYSTEM, administrators and interactive users may, at medium integrity or above. COM security
+  //! is process-wide and must be set before anything is marshalled, so call it at startup.
+  static void initializeComSecurity();
+
   //! Replaces the clipboard with the files from `source`, plus `text` (e.g. their names) if not empty.
-  //! Returns at once; the clipboard thread does the rest. COM access is fixed by the first call in the process.
-  bool setFiles(
-      std::shared_ptr<VirtualFileSource> source, const std::wstring &text,
-      ComAccess access = ComAccess::InteractiveUsers
-  );
+  //! Returns at once; the clipboard thread does the rest.
+  bool setFiles(std::shared_ptr<VirtualFileSource> source, const std::wstring &text);
 
   //! Test hook: returns true if text copied on the server asks this client to offer a test file
-  static bool isSelfTestRequest(const std::string &text, ComAccess &access);
+  static bool isSelfTestRequest(const std::string &text);
 
   //! A source holding files in memory, for the test hook
   static std::shared_ptr<VirtualFileSource> memorySource(std::vector<std::pair<std::wstring, std::string>> files);
