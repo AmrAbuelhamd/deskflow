@@ -33,10 +33,9 @@ quit_deskflow() {
   echo "Quitting Deskflow..."
   osascript -e 'quit app "Deskflow"' > /dev/null 2>&1 || true
   wait_for_exit && return 0
-  # Deskflow can refuse that (error -128) and stay in the menu bar. It quits on
-  # SIGTERM as it does from its menu, stopping deskflow-core with it.
+  # Deskflow can refuse that (error -128) and stay in the menu bar. SIGTERM ends it,
+  # but not the deskflow-core it started, so that gets one too.
   pkill -TERM -x Deskflow || true
-  wait_for_exit && return 0
   pkill -TERM -x deskflow-core || true
   wait_for_exit && return 0
   echo "Deskflow is still running. Quit it from its menu bar icon, then run this again." >&2
