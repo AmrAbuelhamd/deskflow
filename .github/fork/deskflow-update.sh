@@ -6,12 +6,21 @@
 #   deskflow-update.sh <tag>      install a specific release, e.g. v1.27.0-amr.1
 #   deskflow-update.sh --rollback put back the app that the last update replaced
 #
-# Environment overrides: DESKFLOW_REPO, DESKFLOW_WINDOWS_DOWNLOADS
+# Settings, from the environment or ~/.config/deskflow-update.env, which stays on this Mac:
+#   DESKFLOW_WINDOWS_DOWNLOADS  a folder on the mounted Windows share for the installer,
+#                               e.g. /Volumes/<share>/Downloads; ~/Downloads otherwise
+#   DESKFLOW_REPO               the GitHub repository to install from
 
 set -euo pipefail
 
+settings="${XDG_CONFIG_HOME:-$HOME/.config}/deskflow-update.env"
+if [ -f "$settings" ]; then
+  # shellcheck source=/dev/null
+  . "$settings"
+fi
+
 repo="${DESKFLOW_REPO:-AmrAbuelhamd/deskflow}"
-windows_downloads="${DESKFLOW_WINDOWS_DOWNLOADS:-/Volumes/share/Downloads}"
+windows_downloads="${DESKFLOW_WINDOWS_DOWNLOADS:-}"
 app="/Applications/Deskflow.app"
 keep="$HOME/Library/Caches/deskflow-update"
 previous="$keep/Deskflow-previous.app"
@@ -87,11 +96,12 @@ ditto "$mnt/Deskflow.app" "$app"
 echo "Installed: $(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString)"
 open "$app"
 
-if [ -d "$windows_downloads" ]; then
+if [ -n "$windows_downloads" ] && [ -d "$windows_downloads" ]; then
   cp "$msi" "$windows_downloads/"
   echo "Windows installer copied to $windows_downloads/$(basename "$msi")"
   echo "On Windows, double-click it in Downloads."
 else
   cp "$msi" "$HOME/Downloads/"
-  echo "The Windows share isn't mounted; the installer is in ~/Downloads/$(basename "$msi")"
+  echo "No Windows share folder is set or mounted (DESKFLOW_WINDOWS_DOWNLOADS);" \
+    "the installer is in ~/Downloads/$(basename "$msi")"
 fi
