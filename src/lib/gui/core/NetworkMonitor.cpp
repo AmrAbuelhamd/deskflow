@@ -52,12 +52,9 @@ void NetworkMonitor::stopMonitoring()
   m_isMonitoring = false;
 }
 
-QStringList NetworkMonitor::validAddresses()
+QList<NetworkAddress> NetworkMonitor::addresses()
 {
-  QList<QHostAddress> physicalIP4;
-  QList<QHostAddress> physicalIP6;
-  QList<QHostAddress> virtualIP4;
-  QList<QHostAddress> virtualIP6;
+  QList<NetworkAddress> result;
   QSet<QHostAddress> uniqueAddresses;
 
   const auto allInterfaces = QNetworkInterface::allInterfaces();
@@ -77,6 +74,12 @@ QStringList NetworkMonitor::validAddresses()
     });
     const bool skipLinkLocal = isVirtual || hasNonLinkLocal;
 
+    auto connection = NetworkAddress::Connection::Other;
+    if (interface.type() == QNetworkInterface::Ethernet)
+      connection = NetworkAddress::Connection::Ethernet;
+    else if (interface.type() == QNetworkInterface::Wifi)
+      connection = NetworkAddress::Connection::WiFi;
+
     for (const auto &entry : addressEntries) {
       const QHostAddress address = entry.ip();
 
@@ -85,58 +88,86 @@ QStringList NetworkMonitor::validAddresses()
       }
 
       uniqueAddresses.insert(address);
-
-      if (address.protocol() == QHostAddress::IPv6Protocol) {
-        if (isVirtual)
-          virtualIP6.append(address);
-        else
-          physicalIP6.append(address);
-      } else {
-        if (isVirtual)
-          virtualIP4.append(address);
-        else
-          physicalIP4.append(address);
-      }
+      result.append({address, connection, isVirtual});
     }
   }
 
-  std::ranges::sort(physicalIP4, [](const QHostAddress &a, const QHostAddress &b) {
-    if (a.isPrivateUse() != b.isPrivateUse())
-      return a.isPrivateUse();
-    if (a.isLinkLocal() != b.isLinkLocal())
-      return a.isLinkLocal();
-    return a.toIPv4Address() < b.toIPv4Address();
-  });
+  sortAddresses(result);
+  return result;
+}
 
-  std::ranges::sort(virtualIP4, [](const QHostAddress &a, const QHostAddress &b) {
-    return a.toIPv4Address() < b.toIPv4Address();
-  });
-
-  std::ranges::sort(physicalIP6, [](const QHostAddress &a, const QHostAddress &b) {
-    if (a.isPrivateUse() != b.isPrivateUse())
-      return a.isPrivateUse();
-    if (a.isLinkLocal() != b.isLinkLocal())
-      return a.isLinkLocal();
-    return a.toString() < b.toString();
-  });
-
-  std::ranges::sort(virtualIP6, [](const QHostAddress &a, const QHostAddress &b) {
-    return a.toString() < b.toString();
-  });
-
-  auto result = physicalIP4;
-  result.append(virtualIP4);
-  result.append(physicalIP6);
-  result.append(virtualIP6);
-
+QStringList NetworkMonitor::validAddresses()
+{
   QStringList ipList;
-  for (const auto &host : result) {
-    ipList.append(host.toString());
+  for (const auto &address : addresses()) {
+    ipList.append(address.ip.toString());
   }
   return ipList;
 }
 
-void NetworkMonitor::setIpAddresses(const QStringList &newAddresses)
+void NetworkMonitor::sortAddresses(QList<NetworkAddress> &addresses)
+{
+  const auto group = [](const NetworkAddress &address) {
+    const bool isIP6 = address.ip.protocol() == QHostAddress::IPv6Protocol;
+    return (isIP6 ? 2 : 0) + (address.isVirtual ? 1 : 0);
+  };
+
+  // a cable is faster and steadier than wi-fi, so it is the better one to connect to
+  const auto rank = [](NetworkAddress::Connection connection) {
+    switch (connection) {
+    case NetworkAddress::Connection::Ethernet:
+      return 0;
+    case NetworkAddress::Connection::WiFi:
+      return 1;
+    default:
+      return 2;
+    }
+  };
+
+  std::ranges::sort(addresses, [&group, &rank](const NetworkAddress &a, const NetworkAddress &b) {
+    if (group(a) != group(b))
+      return group(a) < group(b);
+    if (!a.isVirtual) {
+      if (a.ip.isPrivateUse() != b.ip.isPrivateUse())
+        return a.ip.isPrivateUse();
+      if (a.ip.isLinkLocal() != b.ip.isLinkLocal())
+        return a.ip.isLinkLocal();
+      if (rank(a.connection) != rank(b.connection))
+        return rank(a.connection) < rank(b.connection);
+    }
+    if (a.ip.protocol() == QHostAddress::IPv6Protocol)
+      return a.ip.toString() < b.ip.toString();
+    return a.ip.toIPv4Address() < b.ip.toIPv4Address();
+  });
+}
+
+QList<NetworkAddress> NetworkMonitor::suggestedAddresses(const QList<NetworkAddress> &addresses)
+{
+  QList<NetworkAddress> suggested;
+  for (const auto &address : addresses) {
+    if (!address.isVirtual && address.ip.protocol() == QHostAddress::IPv4Protocol)
+      suggested.append(address);
+  }
+
+  if (suggested.isEmpty() && !addresses.isEmpty())
+    suggested.append(addresses.first());
+
+  return suggested;
+}
+
+QString NetworkMonitor::describe(const NetworkAddress &address)
+{
+  switch (address.connection) {
+  case NetworkAddress::Connection::Ethernet:
+    return tr("%1 (Ethernet)").arg(address.ip.toString());
+  case NetworkAddress::Connection::WiFi:
+    return tr("%1 (Wi-Fi)").arg(address.ip.toString());
+  default:
+    return address.ip.toString();
+  }
+}
+
+void NetworkMonitor::setIpAddresses(const QList<NetworkAddress> &newAddresses)
 {
   if (newAddresses == m_lastAddresses)
     return;
@@ -146,7 +177,7 @@ void NetworkMonitor::setIpAddresses(const QStringList &newAddresses)
 
 void NetworkMonitor::updateNetworkState()
 {
-  setIpAddresses(validAddresses());
+  setIpAddresses(addresses());
 }
 
 } // namespace deskflow::gui
