@@ -645,10 +645,8 @@ void OSXComputer::fakeMouseRelativeMove(int32_t dx, int32_t dy) const
 void OSXComputer::fakeMouseWheel(ScrollDelta delta) const
 {
   if (delta.x != 0 || delta.y != 0) {
-    // use server's acceleration with a little boost since other platforms
-    // take one wheel step as a larger step than the mac does.
     delta = applyScrollModifier(
-        {static_cast<int32_t>(3.0 * delta.x / s_scrollDelta), static_cast<int32_t>(3.0 * delta.y / s_scrollDelta)}
+        {static_cast<int32_t>(delta.x / s_scrollDelta), static_cast<int32_t>(delta.y / s_scrollDelta)}
     );
     // create a scroll event, post it and release it.  not sure if kCGScrollEventUnitLine
     // is the right choice here over kCGScrollEventUnitPixel
@@ -1872,7 +1870,9 @@ void OSXComputer::waitForCarbonLoop() const
   LOG_DEBUG("waiting for carbon loop");
 
   double timeout = Arch::time() + kCarbonLoopWaitTimeout;
-  while (!m_carbonLoopReady->wait()) {
+  while (!*m_carbonLoopReady) {
+    m_carbonLoopReady->wait();
+
     if (Arch::time() > timeout) {
       LOG_DEBUG("carbon loop not ready, waiting again");
       timeout = Arch::time() + kCarbonLoopWaitTimeout;
