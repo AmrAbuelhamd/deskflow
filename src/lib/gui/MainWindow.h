@@ -46,6 +46,7 @@ class MainWindow : public QMainWindow
   using ConnectionState = deskflow::core::ConnectionState;
   using CoreMode = Settings::CoreMode;
   using CoreProcess = deskflow::gui::CoreProcess;
+  using NetworkAddress = deskflow::gui::NetworkAddress;
   using NetworkMonitor = deskflow::gui::NetworkMonitor;
   using ProcessState = deskflow::core::ProcessState;
 
@@ -140,7 +141,7 @@ private:
   void daemonIpcClientConnectionFailed();
   void toggleCanRunCore(bool enableButtons);
   void remoteHostChanged(const QString &newRemoteHost);
-  void updateIpLabel(const QStringList &addresses);
+  void updateIpLabel(const QList<NetworkAddress> &addresses);
   void updateTimeoutDelay(int newDelay);
   void setHelpFilePath();
   void showHelpViewer() const;
@@ -205,10 +206,6 @@ private:
 
   // Network monitoring
   NetworkMonitor *m_networkMonitor = nullptr;
-  QString m_currentIpAddress;
 
-  // Server IP strategy optimization
-  QStringList m_serverStartIPs;
-  QString m_serverStartSuggestedIP;
   QUrl m_helpPath;
 };

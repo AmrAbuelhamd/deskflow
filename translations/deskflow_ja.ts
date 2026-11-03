@@ -607,6 +607,14 @@ Do you want to connect to the server?
         <translation>推奨するIPアドレス。</translation>
     </message>
     <message>
+        <source>IP address: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>IP addresses: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>one of the following IPs:&lt;br/&gt;%1</source>
         <translation>以下のIPアドレスのいずれか:&lt;br/&gt;%1</translation>
     </message>
@@ -697,7 +705,7 @@ Valid names:
     </message>
     <message>
         <source>Suggested IP: </source>
-        <translation>推奨IPアドレス: </translation>
+        <translation type="vanished">推奨IPアドレス: </translation>
     </message>
     <message>
         <source>&amp;Configure Client</source>
@@ -1391,6 +1399,17 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Encryption Disabled</source>
         <translation>暗号化無効</translation>
+    </message>
+</context>
+<context>
+    <name>deskflow::gui::NetworkMonitor</name>
+    <message>
+        <source>%1 (Ethernet)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (Wi-Fi)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

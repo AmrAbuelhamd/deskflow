@@ -607,6 +607,14 @@ Do you want to connect to the server?
         <translation>建议的 IP 地址。</translation>
     </message>
     <message>
+        <source>IP address: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>IP addresses: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>one of the following IPs:&lt;br/&gt;%1</source>
         <translation>以下 IP 地址之一：&lt;br/&gt;%1</translation>
     </message>
@@ -697,7 +705,7 @@ Valid names:
     </message>
     <message>
         <source>Suggested IP: </source>
-        <translation type="unfinished">建议 IP： </translation>
+        <translation type="obsolete">建议 IP： </translation>
     </message>
     <message>
         <source>&amp;Configure Client</source>
@@ -1391,6 +1399,17 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Encryption Disabled</source>
         <translation>加密已禁用</translation>
+    </message>
+</context>
+<context>
+    <name>deskflow::gui::NetworkMonitor</name>
+    <message>
+        <source>%1 (Ethernet)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (Wi-Fi)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

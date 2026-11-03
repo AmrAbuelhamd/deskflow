@@ -607,6 +607,14 @@ Do you want to connect to the server?
         <translation>추천 IP 주소</translation>
     </message>
     <message>
+        <source>IP address: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>IP addresses: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>one of the following IPs:&lt;br/&gt;%1</source>
         <translation>다음 IP 중 하나:&lt;br/&gt;%1</translation>
     </message>
@@ -697,7 +705,7 @@ Valid names:
     </message>
     <message>
         <source>Suggested IP: </source>
-        <translation type="unfinished">추천 IP: </translation>
+        <translation type="obsolete">추천 IP: </translation>
     </message>
     <message>
         <source>&amp;Configure Client</source>
@@ -1389,6 +1397,17 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Encryption Disabled</source>
         <translation>암호화 사용 안 함</translation>
+    </message>
+</context>
+<context>
+    <name>deskflow::gui::NetworkMonitor</name>
+    <message>
+        <source>%1 (Ethernet)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (Wi-Fi)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

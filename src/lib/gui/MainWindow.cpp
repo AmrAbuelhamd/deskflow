@@ -49,6 +49,7 @@
 #include <QScreen>
 #include <QScrollBar>
 
+#include <algorithm>
 #include <memory>
 
 #if defined(Q_OS_MACOS)
@@ -405,12 +406,6 @@ void MainWindow::coreProcessError(CoreProcess::Error error)
 
 void MainWindow::startCore()
 {
-  // Save current IP state when server starts
-  if (m_coreProcess.mode() == CoreMode::Server && Settings::value(Settings::Core::Interface).toString().isEmpty()) {
-    m_serverStartIPs = NetworkMonitor::validAddresses();
-    m_serverStartSuggestedIP = m_serverStartIPs.isEmpty() ? "" : m_serverStartIPs.first();
-  }
-
   m_actionStartCore->setVisible(false);
   m_actionRestartCore->setVisible(true);
   m_coreProcess.start();
@@ -600,10 +595,7 @@ void MainWindow::updateNetworkInfo()
     return;
   }
 
-  if (mode == CoreMode::Server)
-    updateIpLabel(NetworkMonitor::validAddresses());
-  else
-    updateIpLabel({Settings::value(Settings::Core::Interface).toString()});
+  updateIpLabel(NetworkMonitor::addresses());
 }
 
 void MainWindow::serverConnectionConfigureClient(const QString &clientName)
@@ -708,11 +700,6 @@ void MainWindow::applyConfig()
 
   updateFingerprintButton();
   setTrayIcon();
-
-  if (const auto ip = Settings::value(Settings::Core::Interface).toString(); !ip.isEmpty()) {
-    m_serverStartIPs = {ip};
-    m_serverStartSuggestedIP = ip;
-  }
 
   coreModeToggled(true);
 }
@@ -1235,7 +1222,7 @@ void MainWindow::remoteHostChanged(const QString &newRemoteHost)
   }
 }
 
-void MainWindow::updateIpLabel(const QStringList &addresses)
+void MainWindow::updateIpLabel(const QList<NetworkAddress> &addresses)
 {
   const auto mode = m_coreProcess.mode();
   if (mode == CoreMode::None) {
@@ -1243,39 +1230,47 @@ void MainWindow::updateIpLabel(const QStringList &addresses)
   }
 
   static const auto colorText = QStringLiteral(R"(<span style="color:%1;">%2</span>)");
-  const bool serverStarted = m_coreProcess.isStarted();
-  const bool fixedIP = !Settings::value(Settings::Core::Interface).toString().isEmpty();
+  const auto fixedIP = Settings::value(Settings::Core::Interface).toString();
 
-  if (!fixedIP && addresses.isEmpty() && !serverStarted || (serverStarted && m_serverStartSuggestedIP.isEmpty())) {
+  if (fixedIP.isEmpty() && addresses.isEmpty()) {
     ui->lblIpAddresses->setText(colorText.arg(palette().linkVisited().color().name(), tr("No IP Detected")));
     ui->lblIpAddresses->setToolTip(tr("Unable to detect an IP address. Check your network connection is active."));
     return;
   }
 
-  QString labelText = fixedIP ? tr("Using IP: ") : tr("Suggested IP: ");
+  QString labelText;
   QString toolTipText = tr("<p>If connecting via the hostname fails, try %1</p>");
 
-  const bool filterIpList = (serverStarted || fixedIP);
-  const QRegularExpression ipListFilter(filterIpList ? QStringLiteral("(%1)").arg(m_serverStartIPs.join("|")) : "");
-  const QStringList ipList = addresses.filter(ipListFilter);
-
-  bool IPValid = true;
-  if (filterIpList && (m_serverStartSuggestedIP != m_currentIpAddress) || !ipList.contains(m_serverStartSuggestedIP)) {
-    IPValid = !ipList.isEmpty();
-  }
-
-  if (IPValid) {
-    m_currentIpAddress = ipList.first();
-    labelText.append(m_currentIpAddress);
-  } else {
-    labelText.append(colorText.arg(palette().linkVisited().color().name(), m_serverStartSuggestedIP));
-    toolTipText.append(tr("\nA bound IP is now invalid, you may need to restart the server."));
-  }
-
-  if (ipList.count() < 2 || fixedIP) {
+  if (!fixedIP.isEmpty()) {
+    labelText = tr("Using IP: ");
+    const QHostAddress boundIP(fixedIP);
+    const auto bound = std::ranges::find_if(addresses, [&boundIP](const auto &a) { return a.ip == boundIP; });
+    if (bound != addresses.end()) {
+      labelText.append(NetworkMonitor::describe(*bound));
+    } else {
+      labelText.append(colorText.arg(palette().linkVisited().color().name(), fixedIP));
+      toolTipText.append(tr("\nA bound IP is now invalid, you may need to restart the server."));
+    }
     toolTipText = toolTipText.arg(tr("the suggested IP."));
   } else {
-    toolTipText = toolTipText.arg(tr("one of the following IPs:<br/>%1").arg(ipList.join("<br/>")));
+    // the server listens on every address, so show the ones another computer can use, as they are now
+    const auto suggested = NetworkMonitor::suggestedAddresses(addresses);
+    QStringList described;
+    for (const auto &address : suggested) {
+      described.append(NetworkMonitor::describe(address));
+    }
+    labelText = suggested.count() == 1 ? tr("IP address: ") : tr("IP addresses: ");
+    labelText.append(described.join(QStringLiteral(", ")));
+
+    if (addresses.count() < 2) {
+      toolTipText = toolTipText.arg(tr("the suggested IP."));
+    } else {
+      QStringList ipList;
+      for (const auto &address : addresses) {
+        ipList.append(address.ip.toString());
+      }
+      toolTipText = toolTipText.arg(tr("one of the following IPs:<br/>%1").arg(ipList.join("<br/>")));
+    }
   }
 
   ui->lblIpAddresses->setText(labelText);
