@@ -636,7 +636,7 @@ Do you want to connect to the server?
     </message>
     <message>
         <source>Suggested IP: </source>
-        <translation type="unfinished">IP sugerida: </translation>
+        <translation type="obsolete">IP sugerida: </translation>
     </message>
     <message>
         <source>&lt;p&gt;If connecting via the hostname fails, try %1&lt;/p&gt;</source>
@@ -645,6 +645,14 @@ Do you want to connect to the server?
     <message>
         <source>the suggested IP.</source>
         <translation type="unfinished">la IP sugerida.</translation>
+    </message>
+    <message>
+        <source>IP address: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>IP addresses: </source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>one of the following IPs:&lt;br/&gt;%1</source>
@@ -1390,6 +1398,17 @@ Al habilitar esta opción, se deshabilitará la interfaz gráfica de usuario (GU
     <message>
         <source>Encryption Disabled</source>
         <translation type="unfinished">Cifrado deshabilitado</translation>
+    </message>
+</context>
+<context>
+    <name>deskflow::gui::NetworkMonitor</name>
+    <message>
+        <source>%1 (Ethernet)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 (Wi-Fi)</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
