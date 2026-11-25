@@ -199,6 +199,45 @@ void FileService::setAccessGuard(AccessGuard guard)
   m_guard = std::move(guard);
 }
 
+void FileService::setMonitorState(wire::MonitorState state)
+{
+  std::vector<std::shared_ptr<Control>> controls;
+  {
+    std::scoped_lock lock(m_mutex);
+    m_monitorState = state;
+    for (const auto &[peer, control] : m_controls) {
+      if (control->version >= wire::kMonitorVersion) {
+        controls.push_back(control);
+      }
+    }
+  }
+  for (const auto &control : controls) {
+    {
+      std::scoped_lock lock(control->mutex);
+      control->monitor = state;
+    }
+    control->wake.notify_all();
+  }
+}
+
+void FileService::setMonitorSwitchHandler(MonitorSwitchHandler handler)
+{
+  std::scoped_lock lock(m_mutex);
+  m_monitorSwitchHandler = std::move(handler);
+}
+
+void FileService::setMonitorStateHandler(MonitorStateHandler handler)
+{
+  std::scoped_lock lock(m_mutex);
+  m_monitorStateHandler = std::move(handler);
+}
+
+bool FileService::serverHasMonitor() const
+{
+  std::scoped_lock lock(m_mutex);
+  return m_client && m_clientControl != nullptr && m_serverVersion >= wire::kMonitorVersion;
+}
+
 bool FileService::startServer(const TlsSettings &tls, uint16_t port, std::string &error)
 {
   stop();
@@ -311,6 +350,8 @@ void FileService::stop()
   m_listener.reset();
   m_controls.clear();
   m_pendingDials.clear();
+  m_monitorState.reset();
+  m_serverVersion = 0;
   m_server = false;
   m_client = false;
   m_port = 0;
@@ -379,13 +420,14 @@ void FileService::handleIncoming(intptr_t socket)
     channel->send(wire::Type::Refused, wire::Writer().str("wrong session").data());
     return;
   }
-  if (!channel->send(wire::Type::Welcome)) {
+  // an older client ignores what's in the welcome
+  if (!channel->send(wire::Type::Welcome, wire::Writer().u16(wire::kVersion).data())) {
     return;
   }
 
   switch (static_cast<wire::Role>(role)) {
   case wire::Role::Control:
-    runServerControl(peer, std::move(channel));
+    runServerControl(peer, std::move(channel), version);
     break;
   case wire::Role::Requester:
     channel->setBulk();
@@ -402,16 +444,20 @@ void FileService::handleIncoming(intptr_t socket)
   }
 }
 
-void FileService::runServerControl(const std::string &peer, std::unique_ptr<TlsChannel> channel)
+void FileService::runServerControl(const std::string &peer, std::unique_ptr<TlsChannel> channel, uint16_t version)
 {
   auto control = std::make_shared<Control>();
   control->channel = channel.get();
+  control->version = version;
   {
     std::scoped_lock lock(m_mutex);
     if (const auto old = m_controls.find(peer); old != m_controls.end()) {
       std::scoped_lock oldLock(old->second->mutex);
       old->second->closed = true;
       old->second->wake.notify_all();
+    }
+    if (version >= wire::kMonitorVersion) {
+      control->monitor = m_monitorState; // nothing to send if the monitor isn't watched
     }
     m_controls[peer] = control;
   }
@@ -421,10 +467,19 @@ void FileService::runServerControl(const std::string &peer, std::unique_ptr<TlsC
   while (!m_stopping) {
     std::unique_lock lock(control->mutex);
     control->wake.wait_for(lock, kPingInterval, [&control, this] {
-      return control->closed || m_stopping || !control->dials.empty();
+      return control->closed || m_stopping || !control->dials.empty() || control->monitor.has_value();
     });
     if (control->closed || m_stopping) {
       break;
+    }
+    if (control->monitor) {
+      const auto state = static_cast<uint8_t>(*control->monitor);
+      control->monitor.reset();
+      lock.unlock();
+      if (!channel->send(wire::Type::Monitor, wire::Writer().u8(state).data())) {
+        break;
+      }
+      continue;
     }
     if (!control->dials.empty()) {
       const auto id = control->dials.front();
@@ -503,7 +558,9 @@ std::unique_ptr<TlsChannel> FileService::dial(const std::string &peer, std::stri
 // client side
 //
 
-bool FileService::hello(TlsChannel &channel, wire::Role role, uint32_t requestId, std::string &error) const
+bool FileService::hello(
+    TlsChannel &channel, wire::Role role, uint32_t requestId, std::string &error, uint16_t *serverVersion
+) const
 {
   wire::Writer writer;
   {
@@ -526,6 +583,12 @@ bool FileService::hello(TlsChannel &channel, wire::Role role, uint32_t requestId
   if (reply->type != wire::Type::Welcome) {
     error = reply->type == wire::Type::Refused ? failure(*reply) : "unexpected answer";
     return false;
+  }
+  if (serverVersion != nullptr) {
+    // version 1 servers send an empty welcome
+    wire::Reader reader(reply->payload);
+    uint16_t version = 1;
+    *serverVersion = reader.u16(version) ? version : 1;
   }
   return true;
 }
@@ -550,7 +613,8 @@ void FileService::clientControlLoop(uint64_t generation)
     if (!isCurrent(generation)) {
       return; // stopped or restarted while connecting
     }
-    if (channel && hello(*channel, wire::Role::Control, 0, error)) {
+    uint16_t serverVersion = 1;
+    if (channel && hello(*channel, wire::Role::Control, 0, error, &serverVersion)) {
       wait = 1s;
       lastError.clear();
       LOG_INFO("file connection: connected to %s", channel->peerName().c_str());
@@ -561,6 +625,7 @@ void FileService::clientControlLoop(uint64_t generation)
           return;
         }
         m_clientControl = channel.get();
+        m_serverVersion = serverVersion;
       }
 
       while (isCurrent(generation)) {
@@ -582,6 +647,17 @@ void FileService::clientControlLoop(uint64_t generation)
               --m_workers;
             }).detach();
           }
+        } else if (frame->type == wire::Type::Monitor) {
+          wire::Reader reader(frame->payload);
+          uint8_t state = 0;
+          MonitorStateHandler handler;
+          {
+            std::scoped_lock lock(m_mutex);
+            handler = m_monitorStateHandler;
+          }
+          if (handler && reader.u8(state) && state <= static_cast<uint8_t>(wire::MonitorState::ShowsOther)) {
+            handler(static_cast<wire::MonitorState>(state));
+          }
         } else {
           break;
         }
@@ -591,6 +667,7 @@ void FileService::clientControlLoop(uint64_t generation)
         std::scoped_lock lock(m_mutex);
         if (m_clientControl == channel.get()) {
           m_clientControl = nullptr;
+          m_serverVersion = 0;
         }
       }
       if (isCurrent(generation)) {
@@ -659,6 +736,7 @@ void FileService::serve(TlsChannel &channel)
     std::string path;
     uint32_t item = 0;
     uint64_t offset = 0;
+    uint8_t target = 0;
     bool ok = true;
 
     switch (frame->type) {
@@ -668,6 +746,9 @@ void FileService::serve(TlsChannel &channel)
     case wire::Type::Read:
       ok = reader.str(offerId) && reader.u32(item) && reader.str(path) && reader.u64(offset) &&
            serveRead(channel, offerId, item, path, offset);
+      break;
+    case wire::Type::MonitorSwitch:
+      ok = reader.u8(target) && serveMonitorSwitch(channel, target);
       break;
     case wire::Type::Ping:
       ok = channel.send(wire::Type::Pong);
@@ -741,6 +822,24 @@ bool FileService::serveRead(
     return channel.send(wire::Type::Failed, wire::Writer().str("can't read " + toUtf8(local->filename())).data());
   }
   return channel.send(wire::Type::ReadEnd, wire::Writer().u64(total).data());
+}
+
+bool FileService::serveMonitorSwitch(TlsChannel &channel, uint8_t target)
+{
+  MonitorSwitchHandler handler;
+  {
+    std::scoped_lock lock(m_mutex);
+    if (m_server) {
+      handler = m_monitorSwitchHandler;
+    }
+  }
+  std::string error = "this computer doesn't watch a shared monitor";
+  if (target > static_cast<uint8_t>(wire::MonitorTarget::Client)) {
+    error = "unknown computer to switch to";
+  } else if (handler && handler(static_cast<wire::MonitorTarget>(target), error)) {
+    return channel.send(wire::Type::Done);
+  }
+  return channel.send(wire::Type::Failed, wire::Writer().str(error).data());
 }
 
 std::shared_ptr<void> FileService::actAsUser() const
@@ -925,6 +1024,51 @@ std::unique_ptr<RemoteFile> FileService::open(
   }
   error = "the connection was lost";
   return nullptr;
+}
+
+bool FileService::requestMonitorSwitch(wire::MonitorTarget target, std::string &error)
+{
+  std::string server;
+  {
+    std::scoped_lock lock(m_mutex);
+    if (!m_client || m_clientControl == nullptr) {
+      error = "not connected to the server";
+      return false;
+    }
+    if (m_serverVersion < wire::kMonitorVersion) {
+      error = "the server's version can't switch a shared monitor";
+      return false;
+    }
+    server = m_host;
+  }
+  const auto request = wire::Writer().u8(static_cast<uint8_t>(target)).data();
+
+  // a reused connection may have been closed by the other side while idle: retry once on a new one
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    bool reused = false;
+    auto channel = acquire(server, reused, error);
+    if (!channel) {
+      return false;
+    }
+    if (channel->send(wire::Type::MonitorSwitch, request)) {
+      if (const auto reply = channel->receive(); reply) {
+        if (reply->type == wire::Type::Done) {
+          release(server, std::move(channel));
+          return true;
+        }
+        error = reply->type == wire::Type::Failed ? failure(*reply) : "unexpected reply";
+        if (reply->type == wire::Type::Failed) {
+          release(server, std::move(channel));
+        }
+        return false;
+      }
+    }
+    if (!reused) {
+      break;
+    }
+  }
+  error = "the connection was lost";
+  return false;
 }
 
 } // namespace deskflow::filetransfer

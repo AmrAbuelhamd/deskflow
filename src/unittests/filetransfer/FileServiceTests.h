@@ -23,6 +23,8 @@ private Q_SLOTS:
   void unofferedFilesAreRefused();
   void untrustedComputerIsRefused();
   void wrongSessionIsRefused();
+  void monitorStateReachesClient();
+  void clientSwitchesMonitor();
 
 private:
   QString path(const QString &name) const;
