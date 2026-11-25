@@ -575,6 +575,14 @@ Do you want to connect to the server?
         <translation>&lt;p&gt;サーバー &apos;%1&apos; への接続に失敗しました。&lt;/p&gt;&lt;p&gt;同じ名前のクライアントがサーバーに接続済です。&lt;/p&gt;&lt;p&gt;名前の重複がないことと、クライアントプロセスが多重起動していない事を確認してください。&lt;/p&gt;</translation>
     </message>
     <message>
+        <source>Show the other computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show this computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>View &amp;Help</source>
         <translation>ヘルプを表示(&amp;H)</translation>
     </message>
@@ -1300,6 +1308,14 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Remove all settings</source>
         <translation>すべての設定を消去する</translation>
+    </message>
+    <message>
+        <source>For one monitor cabled to both computers: the computer it doesn&apos;t show stops using it until it&apos;s switched back, and the menu can switch it. Turn this on on both computers. Needs the server on macOS and DDC/CI turned on in the monitor&apos;s menu.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop using a shared monitor while it shows the other computer</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

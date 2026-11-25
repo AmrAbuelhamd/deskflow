@@ -575,6 +575,14 @@ Do you want to connect to the server?
         <translation>&lt;p&gt;서버 &apos;%1&apos;에 연결하지 못했습니다.&lt;/p&gt;&lt;p&gt;같은 이름의 클라이언트가 이미 서버에 연결되어 있습니다.&lt;/p&gt;&lt;p&gt;고유한 이름을 사용하고, 클라이언트 프로세스가 하나만 실행 중인지 확인하세요.&lt;/p&gt;</translation>
     </message>
     <message>
+        <source>Show the other computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show this computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>View &amp;Help</source>
         <translation type="unfinished">도움말 보기(&amp;H)</translation>
     </message>
@@ -1298,6 +1306,14 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Remove all settings</source>
         <translation type="unfinished">모든 설정 제거</translation>
+    </message>
+    <message>
+        <source>For one monitor cabled to both computers: the computer it doesn&apos;t show stops using it until it&apos;s switched back, and the menu can switch it. Turn this on on both computers. Needs the server on macOS and DDC/CI turned on in the monitor&apos;s menu.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop using a shared monitor while it shows the other computer</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

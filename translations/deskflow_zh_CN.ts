@@ -575,6 +575,14 @@ Do you want to connect to the server?
         <translation>&lt;p&gt;连接到服务器“%1”失败。&lt;/p&gt;&lt;p&gt;一个同名的客户端已连接到服务器。&lt;/p&gt;请确保您使用的名称唯一，且只有一个客户端进程实例在运行。&lt;/p&gt;</translation>
     </message>
     <message>
+        <source>Show the other computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show this computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>View &amp;Help</source>
         <translation type="unfinished">查看帮助(&amp;H)</translation>
     </message>
@@ -1300,6 +1308,14 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Remove all settings</source>
         <translation type="unfinished">移除所有设置</translation>
+    </message>
+    <message>
+        <source>For one monitor cabled to both computers: the computer it doesn&apos;t show stops using it until it&apos;s switched back, and the menu can switch it. Turn this on on both computers. Needs the server on macOS and DDC/CI turned on in the monitor&apos;s menu.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop using a shared monitor while it shows the other computer</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

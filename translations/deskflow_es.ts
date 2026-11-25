@@ -615,6 +615,14 @@ Do you want to connect to the server?
         <translation>%1 Error de conexión</translation>
     </message>
     <message>
+        <source>Show the other computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show this computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Invalid Computer Name</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1298,6 +1306,14 @@ Al habilitar esta opción, se deshabilitará la interfaz gráfica de usuario (GU
     <message>
         <source>Remove all settings</source>
         <translation type="unfinished">Eliminar todas las configuraciones</translation>
+    </message>
+    <message>
+        <source>For one monitor cabled to both computers: the computer it doesn&apos;t show stops using it until it&apos;s switched back, and the menu can switch it. Turn this on on both computers. Needs the server on macOS and DDC/CI turned on in the monitor&apos;s menu.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop using a shared monitor while it shows the other computer</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
