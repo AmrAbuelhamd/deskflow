@@ -19,9 +19,12 @@
 #include <QElapsedTimer>
 #include <QFile>
 
+#include <atomic>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 using namespace deskflow::filetransfer;
 namespace fs = std::filesystem;
@@ -288,6 +291,68 @@ void FileServiceTests::wrongSessionIsRefused()
   std::vector<Entry> entries;
   QVERIFY(!client.list(list, 0, entries, error));
   QCOMPARE(error, std::string("wrong session"));
+}
+
+void FileServiceTests::monitorStateReachesClient()
+{
+  FileService server;
+  FileService client;
+  std::mutex mutex;
+  std::vector<int> told;
+  client.setMonitorStateHandler([&mutex, &told](wire::MonitorState state) {
+    std::scoped_lock lock(mutex);
+    told.push_back(static_cast<int>(state));
+  });
+  const auto count = [&mutex, &told] {
+    std::scoped_lock lock(mutex);
+    return told.size();
+  };
+
+  // known before the client connects: it's told as soon as it does
+  std::string error;
+  QVERIFY2(server.startServer(m_serverTls, 0, error), error.c_str());
+  server.setMonitorState(wire::MonitorState::ShowsOther);
+  client.startClient(m_clientTls, "127.0.0.1", server.port(), server.token(), "client");
+  QVERIFY(waitFor([&count] { return count() == 1; }));
+  QVERIFY(client.serverHasMonitor());
+
+  // and of every change
+  server.setMonitorState(wire::MonitorState::ShowsYou);
+  QVERIFY(waitFor([&count] { return count() == 2; }));
+  server.setMonitorState(wire::MonitorState::Released);
+  QVERIFY(waitFor([&count] { return count() == 3; }));
+
+  std::scoped_lock lock(mutex);
+  QCOMPARE(told.at(0), static_cast<int>(wire::MonitorState::ShowsOther));
+  QCOMPARE(told.at(1), static_cast<int>(wire::MonitorState::ShowsYou));
+  QCOMPARE(told.at(2), static_cast<int>(wire::MonitorState::Released));
+}
+
+void FileServiceTests::clientSwitchesMonitor()
+{
+  FileService server;
+  FileService client;
+  std::atomic<int> asked{-1};
+  server.setMonitorSwitchHandler([&asked](wire::MonitorTarget target, std::string &) {
+    asked = static_cast<int>(target);
+    return true;
+  });
+
+  std::string error;
+  QVERIFY2(server.startServer(m_serverTls, 0, error), error.c_str());
+  client.startClient(m_clientTls, "127.0.0.1", server.port(), server.token(), "client");
+  QVERIFY(waitFor([&client] { return client.serverHasMonitor(); }));
+
+  QVERIFY2(client.requestMonitorSwitch(wire::MonitorTarget::Client, error), error.c_str());
+  QCOMPARE(asked.load(), static_cast<int>(wire::MonitorTarget::Client));
+
+  // a server that can't switch says why
+  server.setMonitorSwitchHandler([](wire::MonitorTarget, std::string &why) {
+    why = "no monitor here";
+    return false;
+  });
+  QVERIFY(!client.requestMonitorSwitch(wire::MonitorTarget::Server, error));
+  QCOMPARE(error, std::string("no monitor here"));
 }
 
 QTEST_MAIN(FileServiceTests)

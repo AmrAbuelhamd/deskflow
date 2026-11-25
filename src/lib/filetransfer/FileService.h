@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -112,6 +113,26 @@ public:
   using AccessGuard = std::function<std::shared_ptr<void>()>;
   void setAccessGuard(AccessGuard guard);
 
+  //! Shared monitor, server side: tells every client that understands it what the monitor
+  //! shows, now and whenever one connects
+  void setMonitorState(wire::MonitorState state);
+
+  //! Shared monitor, server side: called on a serving thread when a client asks to switch the
+  //! monitor. Returns false and a reason when it can't.
+  using MonitorSwitchHandler = std::function<bool(wire::MonitorTarget target, std::string &error)>;
+  void setMonitorSwitchHandler(MonitorSwitchHandler handler);
+
+  //! Shared monitor, client side: called on the control connection's thread when the server
+  //! says what the monitor shows; it should return quickly
+  using MonitorStateHandler = std::function<void(wire::MonitorState state)>;
+  void setMonitorStateHandler(MonitorStateHandler handler);
+
+  //! Shared monitor, client side: whether the server is connected and understands it
+  bool serverHasMonitor() const;
+
+  //! Shared monitor, client side: asks the server to switch the monitor. Blocking, like list().
+  bool requestMonitorSwitch(wire::MonitorTarget target, std::string &error);
+
 private:
   friend class RemoteFile;
 
@@ -120,24 +141,29 @@ private:
     std::mutex mutex;
     std::condition_variable wake;
     std::deque<uint32_t> dials;
+    std::optional<wire::MonitorState> monitor; // to send next
     TlsChannel *channel = nullptr;
+    uint16_t version = 1;
     bool closed = false;
   };
 
   void acceptLoop();
   void handleIncoming(intptr_t socket);
-  void runServerControl(const std::string &peer, std::unique_ptr<TlsChannel> channel);
+  void runServerControl(const std::string &peer, std::unique_ptr<TlsChannel> channel, uint16_t version);
   void deliverDial(uint32_t id, std::unique_ptr<TlsChannel> channel);
   std::unique_ptr<TlsChannel> dial(const std::string &peer, std::string &error);
 
   void clientControlLoop(uint64_t generation);
   bool isCurrent(uint64_t generation) const;
   void answerDial(uint32_t id);
-  bool hello(TlsChannel &channel, wire::Role role, uint32_t requestId, std::string &error) const;
+  bool hello(
+      TlsChannel &channel, wire::Role role, uint32_t requestId, std::string &error, uint16_t *serverVersion = nullptr
+  ) const;
 
   void serve(TlsChannel &channel);
   bool serveList(TlsChannel &channel, const std::string &offerId, uint32_t item);
   bool serveRead(TlsChannel &channel, const std::string &offerId, uint32_t item, const std::string &path, uint64_t offset);
+  bool serveMonitorSwitch(TlsChannel &channel, uint8_t target);
 
   std::shared_ptr<void> actAsUser() const;
 
@@ -155,6 +181,10 @@ private:
   uint16_t m_port = 0;
   std::string m_name;
   AccessGuard m_guard;
+  std::optional<wire::MonitorState> m_monitorState; // server: what clients were last told
+  MonitorSwitchHandler m_monitorSwitchHandler;
+  MonitorStateHandler m_monitorStateHandler;
+  uint16_t m_serverVersion = 0; // client: the server's version while the control connection is up
 
   std::atomic<bool> m_stopping{false};
   std::condition_variable m_stopWake;

@@ -93,6 +93,7 @@ target_link_libraries(${lib_name}
   PUBLIC
     common
     filetransfer
+    sharedmonitor
     Qt6::Network
   PRIVATE
     platform

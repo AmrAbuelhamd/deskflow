@@ -15,7 +15,9 @@
 #include "common/ExitCodes.h"
 #include "deskflow/ClientApp.h"
 #include "deskflow/ServerApp.h"
+#include "deskflow/ipc/CoreIpc.h"
 #include "deskflow/ipc/CoreIpcServer.h"
+#include "sharedmonitor/SharedMonitor.h"
 
 #if defined(Q_OS_WIN)
 #include "arch/win32/ArchMiscWindows.h"
@@ -77,6 +79,9 @@ int main(int argc, char **argv)
   if (argc == 2 && strcmp(argv[1], MSWindowsFileClipboard::kPrintCopiedFilesArg) == 0) {
     return MSWindowsFileClipboard::printCopiedFiles();
   }
+  if (argc == 3 && strcmp(argv[1], deskflow::sharedmonitor::kDisplayModeArg) == 0) {
+    return deskflow::sharedmonitor::runDisplayModeHelper(argv[2]);
+  }
   ArchMiscWindows::setInstanceWin32(GetModuleHandle(nullptr));
 #endif
 
@@ -133,6 +138,11 @@ int main(int argc, char **argv)
       ipcServer, &deskflow::core::ipc::IpcServer::stopProcessRequested, coreApp, &App::quit, Qt::DirectConnection
   );
   ipcServer->listen();
+
+  // tells the GUI what its shared monitor menu item can offer
+  deskflow::sharedmonitor::setStateListener([](const std::string &state) {
+    ipcSendToClient(QStringLiteral("sharedMonitor"), QString::fromStdString(state));
+  });
 
   QThread coreThread;
   QObject::connect(&coreThread, &QThread::finished, &app, &QApplication::quit);

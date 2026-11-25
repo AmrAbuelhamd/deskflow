@@ -16,7 +16,9 @@
 //! strings are a u16 length followed by UTF-8 bytes.
 namespace deskflow::filetransfer::wire {
 
-constexpr uint16_t kVersion = 1;
+constexpr uint16_t kVersion = 2;
+//! The first version with the shared monitor messages; an older side never gets them
+constexpr uint16_t kMonitorVersion = 2;
 constexpr uint32_t kMaxFrameSize = 2 * 1024 * 1024;
 constexpr size_t kDataChunkSize = 1024 * 1024;
 constexpr size_t kTokenWords = 4;
@@ -26,7 +28,7 @@ using Token = std::array<uint32_t, kTokenWords>;
 enum class Type : uint8_t
 {
   Hello = 1,   //!< u16 version, u8 role, token words, u32 request id, string computer name
-  Welcome = 2, //!< empty
+  Welcome = 2, //!< from version 2: u16 version (empty before)
   Refused = 3, //!< string reason
 
   List = 10,    //!< string offer id, u32 item: list the item and, for a folder, everything below it
@@ -41,13 +43,32 @@ enum class Type : uint8_t
   Ping = 31, //!< empty
   Pong = 32, //!< empty
 
-  Failed = 40 //!< string reason: the request failed, the connection stays usable
+  Failed = 40, //!< string reason: the request failed, the connection stays usable
+  Done = 41,   //!< empty: the request was carried out
+
+  Monitor = 50,      //!< u8 MonitorState, on the control connection: what the shared monitor shows
+  MonitorSwitch = 51 //!< u8 MonitorTarget: switch the shared monitor; answered with Done or Failed
+};
+
+//! What the shared monitor shows, as the server tells a client
+enum class MonitorState : uint8_t
+{
+  Released = 0,  //!< the server stopped watching it: use it as usual
+  ShowsYou = 1,  //!< it shows the client
+  ShowsOther = 2 //!< it shows another computer: stop using it
+};
+
+//! Which computer a client asks the server to show on the shared monitor
+enum class MonitorTarget : uint8_t
+{
+  Server = 0,
+  Client = 1 //!< the client that asks
 };
 
 //! What the connecting side will do once connected
 enum class Role : uint8_t
 {
-  Control = 1,     //!< kept open by the client; the server sends Dial over it
+  Control = 1,     //!< kept open by the client; the server sends Dial and Monitor over it
   Requester = 2,   //!< the connecting side sends requests, the accepting side serves them
   ServeRequest = 3 //!< answer to a Dial: the accepting side sends requests, the connecting side serves them
 };

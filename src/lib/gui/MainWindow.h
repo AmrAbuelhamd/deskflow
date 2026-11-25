@@ -163,6 +163,8 @@ private:
   Fingerprint m_fingerprint;
 
   void serverClientsChanged(const QStringList &clients);
+  void sharedMonitorChanged(const QString &state);
+  void updateSharedMonitorAction();
 
   inline static const auto m_guiSocketName = QStringLiteral("deskflow-gui");
   inline static const auto m_nameRegEx = QRegularExpression(QStringLiteral("^[\\w\\-_\\.]{0,255}$"));
@@ -203,6 +205,8 @@ private:
   QAction *m_actionRestartCore = nullptr;
   QAction *m_actionStopCore = nullptr;
   QAction *m_actionShowHelp = nullptr;
+  QAction *m_actionSharedMonitor = nullptr;
+  QString m_sharedMonitorState = QStringLiteral("none"); // as the core reports it
 
   // Network monitoring
   NetworkMonitor *m_networkMonitor = nullptr;

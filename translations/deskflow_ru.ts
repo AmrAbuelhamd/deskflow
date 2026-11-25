@@ -575,6 +575,14 @@ Do you want to connect to the server?
         <translation>&lt;p&gt;Не удалось подключиться к серверу &apos;%1&apos;.&lt;/p&gt;&lt;p&gt;Клиент с таким именем уже подключен к серверу.&lt;/p&gt;Убедитесь, что вы используете уникальное имя и запущен только один процесс клиента.&lt;/p&gt;</translation>
     </message>
     <message>
+        <source>Show the other computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show this computer on the monitor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>View &amp;Help</source>
         <translation type="unfinished">Просмотр &amp;справки</translation>
     </message>
@@ -1296,6 +1304,14 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Remove all settings</source>
         <translation type="unfinished">Удалить все настройки</translation>
+    </message>
+    <message>
+        <source>For one monitor cabled to both computers: the computer it doesn&apos;t show stops using it until it&apos;s switched back, and the menu can switch it. Turn this on on both computers. Needs the server on macOS and DDC/CI turned on in the monitor&apos;s menu.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop using a shared monitor while it shows the other computer</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
