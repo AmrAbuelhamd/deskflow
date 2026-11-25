@@ -8,6 +8,7 @@
 
 #include "base/Log.h"
 #include "common/Constants.h"
+#include "sharedmonitor/SharedMonitor.h"
 
 #include <QLocalSocket>
 
@@ -29,12 +30,21 @@ CoreIpcServer &CoreIpcServer::instance()
 
 void CoreIpcServer::processCommand(QLocalSocket *clientSocket, const QString &command, const QStringList &parts)
 {
-  Q_UNUSED(parts)
   if (command == QStringLiteral("stop")) {
     LOG_DEBUG("core ipc server got stop message");
     writeToClientSocket(clientSocket, QStringLiteral("ok"));
     broadcastCommand(QStringLiteral("bye"));
     Q_EMIT stopProcessRequested();
+    return;
+  }
+  if (command == QStringLiteral("sharedMonitorQuery")) {
+    const auto state = QString::fromStdString(deskflow::sharedmonitor::state());
+    writeToClientSocket(clientSocket, QStringLiteral("sharedMonitor=%1").arg(state));
+    return;
+  }
+  if (command == QStringLiteral("sharedMonitorSwitch")) {
+    // "here": show this computer on the monitor, "other": the other computer
+    deskflow::sharedmonitor::requestSwitch(parts.size() >= 2 && parts.at(1) == QStringLiteral("here"));
     return;
   }
   LOG_WARN("core ipc server got unknown command: %s", command.toUtf8().constData());

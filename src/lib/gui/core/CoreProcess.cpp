@@ -470,8 +470,10 @@ void CoreProcess::start(std::optional<ProcessMode> processModeOption)
               m_coreIpcClient, &ipc::CoreIpcClient::commandReceived, this, &CoreProcess::onCoreIpcMessageReceived,
               Qt::QueuedConnection
           );
-          connect(m_coreIpcClient, &ipc::CoreIpcClient::connected, this, [] {
+          connect(m_coreIpcClient, &ipc::CoreIpcClient::connected, this, [client = m_coreIpcClient] {
             qDebug("connected to core ipc server");
+            // what the shared monitor shows, in case the core said so before this connected
+            client->sendCommand(QStringLiteral("sharedMonitorQuery"));
           });
           connect(m_coreIpcClient, &ipc::CoreIpcClient::connectionFailed, this, [] {
             qWarning("failed to establish core ipc connection");
@@ -622,6 +624,20 @@ void CoreProcess::setProcessState(ProcessState state)
   );
   m_processState = state;
   Q_EMIT processStateChanged(state);
+  if (state == ProcessState::Stopped) {
+    Q_EMIT sharedMonitorChanged(QStringLiteral("none"));
+  }
+}
+
+void CoreProcess::switchSharedMonitor(bool toThisComputer)
+{
+  if (!m_coreIpcClient || !m_coreIpcClient->isConnected()) {
+    qWarning("can't switch the shared monitor, the core isn't connected");
+    return;
+  }
+  m_coreIpcClient->sendCommand(
+      QStringLiteral("sharedMonitorSwitch"), toThisComputer ? QStringLiteral("here") : QStringLiteral("other")
+  );
 }
 
 void CoreProcess::onCoreIpcMessageReceived(const QString &command, const QString &args)
@@ -635,6 +651,8 @@ void CoreProcess::onCoreIpcMessageReceived(const QString &command, const QString
       return;
     }
     setConnectionState(state);
+  } else if (command == "sharedMonitor") {
+    Q_EMIT sharedMonitorChanged(args);
   } else if (command == "connectedClients") {
     const auto clients = args.isEmpty() ? QStringList() : args.split(",");
     Q_EMIT connectedClientsChanged(clients);

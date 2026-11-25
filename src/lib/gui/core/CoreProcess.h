@@ -47,6 +47,8 @@ public:
   void applyLogLevel();
   void clearSettings();
   void retryDaemon();
+  //! Switches the shared monitor to this computer or the other one
+  void switchSharedMonitor(bool toThisComputer);
 
   // getters
   Settings::CoreMode mode() const
@@ -94,6 +96,8 @@ Q_SIGNALS:
   void retryIn(int seconds);
   void peerFingerprint(const QString &fingerprint);
   void missingKeyboardLayouts(const QString &layouts);
+  //! "here" (the shared monitor shows this computer), "other" or "none" (not watched)
+  void sharedMonitorChanged(const QString &state);
 
 private Q_SLOTS:
   void onProcessFinished(int exitCode, QProcess::ExitStatus);

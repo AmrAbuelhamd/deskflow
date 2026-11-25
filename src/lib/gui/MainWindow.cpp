@@ -80,6 +80,7 @@ MainWindow::MainWindow()
       m_actionRestartCore{new QAction(this)},
       m_actionStopCore{new QAction(this)},
       m_actionShowHelp{new QAction(this)},
+      m_actionSharedMonitor{new QAction(this)},
       m_networkMonitor{new NetworkMonitor(this)}
 {
   ui->setupUi(this);
@@ -269,6 +270,12 @@ void MainWindow::connectSlots()
   connect(m_actionStopCore, &QAction::triggered, this, &MainWindow::stopCore);
   connect(m_actionShowHelp, &QAction::triggered, this, &MainWindow::showHelpViewer);
 
+  // switches the shared monitor to whichever computer it doesn't show
+  m_actionSharedMonitor->setVisible(false);
+  connect(m_actionSharedMonitor, &QAction::triggered, this, [this] {
+    m_coreProcess.switchSharedMonitor(m_sharedMonitorState == QStringLiteral("other"));
+  });
+
   // Mac os tray will only show a menu
   if (!deskflow::platform::isMac())
     connect(m_trayIcon, &QSystemTrayIcon::activated, this, &MainWindow::trayIconActivated);
@@ -279,6 +286,7 @@ void MainWindow::connectSlots()
   connect(&m_coreProcess, &CoreProcess::retryIn, this, &MainWindow::updateTimeoutDelay);
   connect(&m_coreProcess, &CoreProcess::peerFingerprint, this, &MainWindow::handlePeerFingerprint);
   connect(&m_coreProcess, &CoreProcess::missingKeyboardLayouts, this, &MainWindow::handleMissingKeyboardLayouts);
+  connect(&m_coreProcess, &CoreProcess::sharedMonitorChanged, this, &MainWindow::sharedMonitorChanged);
 
   if (Settings::value(Settings::Gui::AutoStartCore).toBool()) {
     connect(ui->btnToggleCore, &QPushButton::clicked, m_actionStopCore, &QAction::trigger, Qt::UniqueConnection);
@@ -654,6 +662,7 @@ void MainWindow::createMenuBar()
   m_menuFile->addAction(m_actionStartCore);
   m_menuFile->addAction(m_actionRestartCore);
   m_menuFile->addAction(m_actionStopCore);
+  m_menuFile->addAction(m_actionSharedMonitor);
   m_menuFile->addSeparator();
   m_menuFile->addAction(m_actionQuit);
 
@@ -677,7 +686,8 @@ void MainWindow::setupTrayIcon()
 {
   auto trayMenu = new QMenu(this);
   trayMenu->addActions(
-      {m_actionStartCore, m_actionRestartCore, m_actionStopCore, m_actionMinimize, m_actionRestore, m_actionTrayQuit}
+      {m_actionStartCore, m_actionRestartCore, m_actionStopCore, m_actionSharedMonitor, m_actionMinimize,
+       m_actionRestore, m_actionTrayQuit}
   );
   trayMenu->insertSeparator(m_actionMinimize);
   trayMenu->insertSeparator(m_actionTrayQuit);
@@ -1034,6 +1044,24 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
   return true;
 }
 
+void MainWindow::sharedMonitorChanged(const QString &state)
+{
+  m_sharedMonitorState = state;
+  updateSharedMonitorAction();
+}
+
+void MainWindow::updateSharedMonitorAction()
+{
+  if (m_sharedMonitorState == QStringLiteral("here")) {
+    m_actionSharedMonitor->setText(tr("Show the other computer on the monitor"));
+  } else if (m_sharedMonitorState == QStringLiteral("other")) {
+    m_actionSharedMonitor->setText(tr("Show this computer on the monitor"));
+  }
+  m_actionSharedMonitor->setVisible(
+      m_sharedMonitorState == QStringLiteral("here") || m_sharedMonitorState == QStringLiteral("other")
+  );
+}
+
 void MainWindow::updateText()
 {
   m_menuFile->setTitle(tr("&File"));
@@ -1054,6 +1082,7 @@ void MainWindow::updateText()
   m_actionAbout->setText(tr("About %1...").arg(kAppName));
 
   m_actionShowHelp->setText(tr("View &Help"));
+  updateSharedMonitorAction();
 
   //: start / restart core shortcut
   m_actionStartCore->setShortcut(QKeySequence(tr("Ctrl+S")));
