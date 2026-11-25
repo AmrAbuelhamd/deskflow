@@ -325,6 +325,10 @@ QVariant Settings::defaultValue(const QString &key)
   if (key == Security::KeySize)
     return 2048;
 
+  // 0: found from the monitor
+  if (key == Core::SharedMonitorInput || key == Core::SharedMonitorOtherInput)
+    return 0;
+
   if (key == Log::File)
     return QStringLiteral("%1/%2.log").arg(QDir::homePath(), kAppId);
 

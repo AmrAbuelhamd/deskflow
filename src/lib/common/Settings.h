@@ -53,6 +53,9 @@ public:
     inline static const auto LastVersion = QStringLiteral("core/lastVersion");
     inline static const auto Port = QStringLiteral("core/port");
     inline static const auto PreventSleep = QStringLiteral("core/preventSleep");
+    inline static const auto SharedMonitor = QStringLiteral("core/sharedMonitor");
+    inline static const auto SharedMonitorInput = QStringLiteral("core/sharedMonitorInput");
+    inline static const auto SharedMonitorOtherInput = QStringLiteral("core/sharedMonitorOtherInput");
     inline static const auto ProcessMode = QStringLiteral("core/processMode");
     inline static const auto ComputerName = QStringLiteral("core/computerName");
     inline static const auto Display = QStringLiteral("core/display");
@@ -286,6 +289,9 @@ private:
     , Core::Port
     , Core::PreventSleep
     , Core::ProcessMode
+    , Core::SharedMonitor
+    , Core::SharedMonitorInput
+    , Core::SharedMonitorOtherInput
     , Core::EnableEnterCommand
     , Core::EnableExitCommand
     , Core::ComputerEnterCommand
@@ -347,6 +353,7 @@ private:
     , Gui::ShowVersionInTitle
     , Gui::IgnoreMissingKeyboardLayouts
     , Core::PreventSleep
+    , Core::SharedMonitor
     , Core::EnableEnterCommand
     , Core::EnableExitCommand
     , Client::DynamicConnectionRetry

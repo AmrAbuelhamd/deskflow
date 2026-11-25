@@ -66,6 +66,7 @@ add_subdirectory(gui)
 add_subdirectory(net)
 add_subdirectory(platform)
 add_subdirectory(server)
+add_subdirectory(sharedmonitor)
 
 #make sure to use CI only plugin on Unix
 if (UNIX AND NOT APPLE)
