@@ -4,6 +4,7 @@ A fork of [Deskflow](https://github.com/deskflow/deskflow), the free and open-so
 
 - **Copy and paste files between computers.** Copy files or folders in Finder and paste them in Explorer, or the other way round, with the usual ⌘C/Ctrl+C and ⌘V/Ctrl+V. Copying sends only names and sizes; the content moves when you paste, over its own encrypted connection, so the pointer never waits for it.
 - **No pointer freeze after copying something big.** A large clipboard, such as a big image, is sent in the background instead of holding up the keyboard and mouse.
+- **One monitor for both computers.** For a monitor cabled to both, the computer it doesn't show stops using it, so that computer's pointer and windows don't disappear onto it. A menu item switches the monitor between the computers. See [Sharing a monitor](#sharing-a-monitor).
 
 Everything else works as in Deskflow; see [Deskflow's README](https://github.com/deskflow/deskflow#readme) for setting it up.
 
@@ -35,6 +36,21 @@ Install this fork on each computer you want to copy files between, and keep TLS 
 Tested with a Mac as the server and a Windows PC as the client. File copying isn't available on Linux.
 
 Known limits on Windows: a file whose path inside a copied folder is 260 characters or longer is skipped, and two names that differ only in characters Windows doesn't allow can end up the same.
+
+## Sharing a monitor
+
+This is for one monitor cabled to both computers, for example by DisplayPort to the Mac and HDMI to Windows. A monitor keeps every input connected while it shows one of them. So the computer it doesn't show keeps using it, and that computer's pointer and windows go where nobody can see them. With this turned on:
+
+- **While the monitor shows the other computer,** the Mac stops using it. The Mac's windows move to its own screen and come back when the monitor shows the Mac again. The Mac asks the monitor once a second, over DDC/CI, which computer it shows.
+- **While the monitor shows the Mac,** Windows uses only its own screen. When the monitor shows Windows again, Windows goes back to the Win+P mode it had.
+- **To switch from the menu,** open Deskflow's menu, in the menu bar or the tray. It shows **Show the other computer on the monitor** or **Show this computer on the monitor**, whichever computer the monitor doesn't show. The monitor's own buttons work too.
+
+To turn it on:
+
+1. In the monitor's own menu, turn on DDC/CI.
+2. On both computers, open **Preferences** and check **Stop using a shared monitor while it shows the other computer**.
+
+It's made for a Mac with Apple silicon as the server and a Windows PC as the client. The Mac's input is taken to be the monitor's DisplayPort input, or its USB-C input if it has no DisplayPort. If that's wrong, set `sharedMonitorInput` and `sharedMonitorOtherInput` under `[core]` in Deskflow's settings file to the VCP 0x60 values of the two inputs, for example `0x11` for HDMI-1.
 
 ## Updating
 
