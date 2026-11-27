@@ -20,6 +20,7 @@
 #include <mach/mach_interface.h>
 #include <mach/mach_port.h>
 
+#include <atomic>
 #include <bitset>
 #include <map>
 #include <memory>
@@ -162,6 +163,10 @@ private:
   bool checkAXPermissions();
   void startClipboardPoll();
   void stopClipboardPoll();
+
+  // the event thread's heartbeat, and the event tap's check of it
+  void beat();
+  bool inputGivenBack();
 
   // global hotkey operating mode
   static bool isGlobalHotKeyOperatingModeAvailable();
@@ -312,6 +317,15 @@ private:
   CFRunLoopSourceRef m_eventTapRLSR;
   std::thread m_eventTapThread;
   CFRunLoopRef m_eventTapRunLoop = nullptr;
+
+  // Off this computer, local input reaches the client only through the event thread. When that
+  // thread stops answering for this long, the event tap lets input through here again. The client
+  // gives up on a silent server sooner (3 missed keep-alives, 9 s), so by then input sent there
+  // goes nowhere anyway.
+  static constexpr uint64_t kGiveInputBackAfterNs = 10'000'000'000;
+  EventQueueTimer *m_beatTimer = nullptr;
+  std::atomic<uint64_t> m_lastBeatNs{0}; // uptime (no sleep) of the last beat; 0 while none beats
+  std::atomic<bool> m_inputGivenBack{false};
 
   // for double click coalescing.
   double m_lastClickTime;
