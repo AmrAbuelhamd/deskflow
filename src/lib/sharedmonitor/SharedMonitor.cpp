@@ -49,7 +49,7 @@ public:
   }
 
   void start(const Options &options, bool server);
-  void stop();
+  void stop(bool giveBack);
   void requestSwitch(bool here);
   std::string state() const;
   void setListener(std::function<void(const std::string &)> listener);
@@ -67,6 +67,9 @@ private:
   void follow(const Options &options);
   void showHere(Watched &watched, const std::string &recoveryFile, bool switchIt);
   void showOther(Watched &watched, uint16_t input, const std::string &recoveryFile, bool switchIt);
+  void catchUp(Watched &watched, const std::string &recoveryFile);
+  bool waitForScreens();
+  bool givesBack() const;
   bool wait(Clock::duration time);
   std::optional<bool> takeSwitch();
   void report(const char *state);
@@ -78,6 +81,7 @@ private:
   bool m_running = false;
   bool m_server = false;
   bool m_stopping = false;
+  bool m_giveBack = true;                   // what stopping does: use the monitor as usual again, or leave it (a sleep)
   std::optional<bool> m_switch;             // to this computer (true) or the other one
   std::optional<wire::MonitorState> m_told; // client: what the server said last
   std::string m_state = kStateNone;
@@ -92,7 +96,7 @@ void Service::start(const Options &options, bool server)
       return; // a client gets the server's options again whenever they change
     }
   }
-  stop();
+  stop(true);
   if (!options.enabled) {
     return;
   }
@@ -129,7 +133,7 @@ void Service::start(const Options &options, bool server)
   }
 }
 
-void Service::stop()
+void Service::stop(bool giveBack)
 {
   std::thread thread;
   {
@@ -138,17 +142,19 @@ void Service::stop()
       return;
     }
     m_stopping = true;
+    m_giveBack = giveBack;
     thread = std::move(m_thread);
   }
   m_wake.notify_all();
   FileService::instance().setMonitorSwitchHandler(nullptr);
   FileService::instance().setMonitorStateHandler(nullptr);
   if (thread.joinable()) {
-    thread.join(); // it gives the monitor back on its way out
+    thread.join(); // it gives the monitor back on its way out, unless this is a sleep
   }
   std::scoped_lock lock(m_mutex);
   m_running = false;
   m_stopping = false;
+  m_giveBack = true;
 }
 
 void Service::requestSwitch(bool here)
@@ -172,6 +178,24 @@ void Service::setListener(std::function<void(const std::string &)> listener)
 {
   std::scoped_lock lock(m_mutex);
   m_listener = std::move(listener);
+}
+
+bool Service::givesBack() const
+{
+  std::scoped_lock lock(m_mutex);
+  return m_giveBack;
+}
+
+// Waits until this computer's screens are awake; false when it's stopped first
+bool Service::waitForScreens()
+{
+  while (platform::screensAsleep()) {
+    if (!wait(kPollInterval)) {
+      return false;
+    }
+    takeSwitch(); // nothing is watched yet
+  }
+  return true;
 }
 
 bool Service::wait(Clock::duration time)
@@ -210,6 +234,10 @@ void Service::report(const char *state)
 void Service::watch(const Options &options)
 {
   const auto &file = options.recoveryFile;
+  // after a wake the screens may still sleep (a dark wake), and macOS can't change them then
+  if (!waitForScreens()) {
+    return;
+  }
   platform::recover(file);
 
   uint16_t here = 0;
@@ -235,8 +263,18 @@ void Service::watch(const Options &options)
       inputName(other).c_str()
   );
 
-  Watched watched{Follower({.hereInput = here}), here, other};
+  // after a sleep this computer may still have the monitor off, which stays right until it shows
+  // this computer
+  Watched watched{Follower({.hereInput = here}), here, other, platform::stoppedUsingMonitor()};
+  bool asleep = false;
   while (wait(kPollInterval)) {
+    // while the screens sleep the monitor stays as it is for macOS; once they wake, catch up
+    if (const bool nowAsleep = platform::screensAsleep(); nowAsleep != asleep) {
+      asleep = nowAsleep;
+      if (!asleep) {
+        catchUp(watched, file);
+      }
+    }
     if (const auto request = takeSwitch(); request) {
       if (*request) {
         showHere(watched, file, true);
@@ -255,11 +293,21 @@ void Service::watch(const Options &options)
     }
   }
 
-  if (watched.off) {
+  if (watched.off && givesBack()) {
     platform::useMonitor(true, file);
   }
   FileService::instance().setMonitorState(wire::MonitorState::Released);
   report(kStateNone);
+}
+
+void Service::catchUp(Watched &watched, const std::string &recoveryFile)
+{
+  const auto shows = watched.follower.shows();
+  if (shows == Shows::Here && watched.off && platform::useMonitor(true, recoveryFile)) {
+    watched.off = false;
+  } else if (shows == Shows::Other && !watched.off && platform::useMonitor(false, recoveryFile)) {
+    watched.off = true;
+  }
 }
 
 void Service::showHere(Watched &watched, const std::string &recoveryFile, bool switchIt)
@@ -305,7 +353,7 @@ void Service::follow(const Options &options)
   const auto &file = options.recoveryFile;
   platform::recover(file);
 
-  bool off = false;
+  bool off = platform::stoppedUsingMonitor();
   for (;;) {
     std::optional<wire::MonitorState> told;
     std::optional<bool> request;
@@ -354,7 +402,7 @@ void Service::follow(const Options &options)
     }
   }
 
-  if (off) {
+  if (off && givesBack()) {
     platform::useMonitor(true, file);
   }
   report(kStateNone);
@@ -374,7 +422,12 @@ void startClient(const Options &options)
 
 void stop()
 {
-  Service::instance().stop();
+  Service::instance().stop(true);
+}
+
+void pause()
+{
+  Service::instance().stop(false);
 }
 
 void requestSwitch(bool here)

@@ -37,6 +37,11 @@ void startClient(const Options &options);
 //! Stops either, and this computer uses the monitor as usual again
 void stop();
 
+//! Stops either for a sleep: the monitor stays as it is, and the next start carries on from
+//! there. macOS can't change its displays while they sleep, and waiting for it to try would hold
+//! up the sleep and the connection to the other computer.
+void pause();
+
 //! Switches the monitor, asked for from the menu: to this computer (here) or the other one
 void requestSwitch(bool here);
 

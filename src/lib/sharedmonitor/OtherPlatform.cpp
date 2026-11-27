@@ -43,9 +43,19 @@ bool useMonitor(bool, const std::string &)
   return false;
 }
 
+bool stoppedUsingMonitor()
+{
+  return false;
+}
+
 void recover(const std::string &)
 {
   // nothing was changed
+}
+
+bool screensAsleep()
+{
+  return false;
 }
 
 } // namespace platform

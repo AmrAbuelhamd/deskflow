@@ -49,8 +49,7 @@ const Api &api()
       result.readI2C = reinterpret_cast<I2CFn>(dlsym(iokit, "IOAVServiceReadI2C"));
       result.writeI2C = reinterpret_cast<I2CFn>(dlsym(iokit, "IOAVServiceWriteI2C"));
     }
-    result.configureEnabled =
-        reinterpret_cast<ConfigureEnabledFn>(dlsym(RTLD_DEFAULT, "CGSConfigureDisplayEnabled"));
+    result.configureEnabled = reinterpret_cast<ConfigureEnabledFn>(dlsym(RTLD_DEFAULT, "CGSConfigureDisplayEnabled"));
     return result;
   }();
   return loaded;
@@ -101,10 +100,8 @@ AVServiceRef openService()
   }
   AVServiceRef found = nullptr;
   int externals = 0;
-  for (io_service_t service = IOIteratorNext(services); service != IO_OBJECT_NULL;
-       service = IOIteratorNext(services)) {
-    if (CFTypeRef location =
-            IORegistryEntryCreateCFProperty(service, CFSTR("Location"), kCFAllocatorDefault, 0)) {
+  for (io_service_t service = IOIteratorNext(services); service != IO_OBJECT_NULL; service = IOIteratorNext(services)) {
+    if (CFTypeRef location = IORegistryEntryCreateCFProperty(service, CFSTR("Location"), kCFAllocatorDefault, 0)) {
       if (CFGetTypeID(location) == CFStringGetTypeID() &&
           CFStringCompare(static_cast<CFStringRef>(location), CFSTR("External"), 0) == kCFCompareEqualTo) {
         ++externals;
@@ -333,6 +330,14 @@ void forget(const std::string &file)
   std::remove(file.c_str());
 }
 
+// macOS can't change its displays while they sleep: it waits for a reconfiguration that never
+// finishes and gives up after about 10 s, and everything waiting on that waits too
+bool asleep()
+{
+  const auto main = CGMainDisplayID();
+  return CGDisplayIsAsleep(main) || !CGDisplayIsActive(main);
+}
+
 // Turns a display back on; true once it's on
 bool turnOn(CGDirectDisplayID display)
 {
@@ -340,6 +345,10 @@ bool turnOn(CGDirectDisplayID display)
     return true;
   }
   if (api().configureEnabled == nullptr) {
+    return false;
+  }
+  if (asleep()) {
+    LOG_DEBUG("shared monitor: the screens sleep, the monitor goes back on for macOS once they wake");
     return false;
   }
   if (const auto error = setEnabled(display, true); error != kCGErrorSuccess) {
@@ -449,6 +458,10 @@ bool useMonitor(bool use, const std::string &recoveryFile)
     LOG_WARN("shared monitor: this version of macOS can't turn a display off");
     return false;
   }
+  if (asleep()) {
+    LOG_DEBUG("shared monitor: the screens sleep, the monitor goes off for macOS once they wake");
+    return false;
+  }
   const auto external = externalDisplay();
   if (external == kCGNullDirectDisplay) {
     LOG_WARN("shared monitor: no single external display to turn off");
@@ -471,9 +484,18 @@ bool useMonitor(bool use, const std::string &recoveryFile)
   return true;
 }
 
+bool stoppedUsingMonitor()
+{
+  std::scoped_lock lock(displayMutex());
+  return s_turnedOff != kCGNullDirectDisplay;
+}
+
 void recover(const std::string &recoveryFile)
 {
   std::scoped_lock lock(displayMutex());
+  if (s_turnedOff != kCGNullDirectDisplay) {
+    return; // this process turned it off before a sleep, and the watcher carries on from there
+  }
   const auto display = noted(recoveryFile);
   if (display == kCGNullDirectDisplay) {
     return;
@@ -482,6 +504,11 @@ void recover(const std::string &recoveryFile)
   if (turnOn(display)) {
     forget(recoveryFile);
   }
+}
+
+bool screensAsleep()
+{
+  return asleep();
 }
 
 } // namespace deskflow::sharedmonitor::platform
