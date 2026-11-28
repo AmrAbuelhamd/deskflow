@@ -20,7 +20,6 @@
 #include "deskflow/ProtocolTypes.h"
 #include "deskflow/ipc/CoreIpc.h"
 #include "filetransfer/Integration.h"
-#include "sharedmonitor/Integration.h"
 #include "net/SocketException.h"
 #include "net/SocketMultiplexer.h"
 #include "net/TCPSocketFactory.h"
@@ -29,6 +28,7 @@
 #include "server/Config.h"
 #include "server/PrimaryClient.h"
 #include "server/Server.h"
+#include "sharedmonitor/Integration.h"
 
 // must be before computer header includes
 #include <QFileInfo>
@@ -432,6 +432,8 @@ void ServerApp::handleSuspend()
 {
   if (!m_suspended) {
     LOG_INFO("suspend");
+    // first, so stopServer() doesn't wait for macOS to change displays that are going to sleep
+    deskflow::sharedmonitor::pause();
     stopServer();
     m_suspended = true;
   }

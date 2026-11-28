@@ -311,13 +311,27 @@ bool useMonitor(bool use, const std::string &recoveryFile)
   return true;
 }
 
+bool stoppedUsingMonitor()
+{
+  std::scoped_lock lock(modeMutex());
+  return s_before != 0;
+}
+
 void recover(const std::string &recoveryFile)
 {
   std::scoped_lock lock(modeMutex());
+  if (s_before != 0) {
+    return; // this process switched away from it itself and carries on from there
+  }
   if (const auto before = noted(recoveryFile); before != 0 && switchMode(std::to_string(before))) {
     LOG_INFO("shared monitor: back to the displays this computer had before it stopped");
     forget(recoveryFile);
   }
+}
+
+bool screensAsleep()
+{
+  return false; // only macOS is known to stall on a display change while its screens sleep
 }
 
 } // namespace platform

@@ -42,6 +42,7 @@
 #include <libproc.h>
 #include <mach-o/dyld.h>
 #include <math.h>
+#include <time.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -721,6 +722,10 @@ void OSXComputer::enable()
   if (m_isPrimary) {
     // FIXME -- start watching jump zones
 
+    beat();
+    m_beatTimer = m_events->newTimer(1.0, nullptr);
+    m_events->addHandler(EventTypes::Timer, m_beatTimer, [this](const auto &) { beat(); });
+
     // kCGEventTapOptionDefault = 0x00000000 (Missing in 10.4, so specified literally)
     m_eventTapPort = CGEventTapCreate(
         kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, kCGEventMaskForAllEvents, handleCGInputEvent,
@@ -792,6 +797,14 @@ void OSXComputer::disable()
     CFRelease(m_eventTapPort);
     m_eventTapPort = nullptr;
   }
+
+  if (m_beatTimer != nullptr) {
+    m_events->removeHandler(EventTypes::Timer, m_beatTimer);
+    m_events->deleteTimer(m_beatTimer);
+    m_beatTimer = nullptr;
+  }
+  m_lastBeatNs = 0;
+  m_inputGivenBack = false;
   // FIXME -- allow system to enter power saving mode
 
   stopClipboardPoll();
@@ -808,6 +821,7 @@ void OSXComputer::disable()
 void OSXComputer::enter()
 {
   m_isOnComputer = true;
+  m_inputGivenBack = false;
   showCursor();
   startClipboardPoll();
 
@@ -853,6 +867,7 @@ void OSXComputer::leave()
   stopClipboardPoll();
 
   // now off computer
+  m_inputGivenBack = false;
   m_isOnComputer = false;
 }
 
@@ -870,7 +885,8 @@ bool OSXComputer::setClipboard(ClipboardID id, const IClipboard *src)
 
     // files copied on another computer go on the pasteboard for Finder
     if (src->open(0)) {
-      const auto files = src->has(IClipboard::Format::FileList) ? src->get(IClipboard::Format::FileList) : std::string();
+      const auto files =
+          src->has(IClipboard::Format::FileList) ? src->get(IClipboard::Format::FileList) : std::string();
       const auto text = src->has(IClipboard::Format::Text) ? src->get(IClipboard::Format::Text) : std::string();
       src->close();
       if (!files.empty()) {
@@ -1563,18 +1579,57 @@ void OSXComputer::handlePowerChangeRequest(natural_t messageType, void *messageA
 void OSXComputer::handleConfirmSleep(const Event &event)
 {
   long messageArg = (long)event.getData();
-  if (messageArg != 0) {
+  if (messageArg == 0) {
+    return;
+  }
+  {
     Lock lock(m_pmMutex);
-    if (m_pmRootPort != 0) {
-      // deliver suspend event immediately.
-      m_events->addEvent(
-          Event(EventTypes::ComputerSuspend, getEventTarget(), nullptr, Event::EventFlags::DeliverImmediately)
-      );
-
-      LOG_DEBUG("system will sleep");
-      IOAllowPowerChange(m_pmRootPort, messageArg);
+    if (m_pmRootPort == 0) {
+      return;
     }
   }
+
+  // deliver suspend event immediately, without m_pmMutex: a handler that gets stuck would
+  // otherwise also stop the power thread, so it couldn't answer macOS or pass on the wake
+  m_events->addEvent(
+      Event(EventTypes::ComputerSuspend, getEventTarget(), nullptr, Event::EventFlags::DeliverImmediately)
+  );
+
+  LOG_DEBUG("system will sleep");
+  Lock lock(m_pmMutex);
+  if (m_pmRootPort != 0) {
+    IOAllowPowerChange(m_pmRootPort, messageArg);
+  }
+}
+
+void OSXComputer::beat()
+{
+  m_lastBeatNs = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+  if (m_inputGivenBack.exchange(false) && !m_isOnComputer) {
+    // it answers again and the pointer is still on the client: capture input again, as leave() does
+    LOG_INFO("the event loop answers again, the keyboard and mouse go back to the other computer");
+    hideCursor();
+    CGAssociateMouseAndMouseCursorPosition(false);
+  }
+}
+
+// Runs on the event tap's thread. Off this computer, the tap swallows all input and the event
+// thread sends it to the client; with that thread stuck, nothing would ever bring the pointer
+// back and this Mac would take no click or key at all, so after a while input stays here again.
+bool OSXComputer::inputGivenBack()
+{
+  if (m_inputGivenBack) {
+    return true;
+  }
+  const uint64_t last = m_lastBeatNs;
+  if (last == 0 || clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - last < kGiveInputBackAfterNs) {
+    return false;
+  }
+  m_inputGivenBack = true;
+  LOG_WARN("the event loop stopped answering, giving this computer its keyboard and mouse back");
+  CGAssociateMouseAndMouseCursorPosition(true);
+  CGDisplayShowCursor(m_displayID);
+  return true;
 }
 
 bool OSXComputer::checkAXPermissions()
@@ -1739,6 +1794,12 @@ OSXComputer::handleCGInputEventSecondary(CGEventTapProxy proxy, CGEventType type
 CGEventRef OSXComputer::handleCGInputEvent(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon)
 {
   OSXComputer *computer = (OSXComputer *)refcon;
+
+  // with the event thread stuck, input stays here, and none piles up for the client
+  if (!computer->m_isOnComputer && type != kCGEventTapDisabledByTimeout && type != kCGEventTapDisabledByUserInput &&
+      computer->inputGivenBack()) {
+    return event;
+  }
 
   switch (type) {
   case kCGEventLeftMouseDown:

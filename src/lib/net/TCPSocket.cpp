@@ -544,8 +544,12 @@ ISocketMultiplexerJob *TCPSocket::serviceConnected(ISocketMultiplexerJob *job, b
     }
   }
 
-  if (readResult == Break || writeResult == Break)
+  if (readResult == Break || writeResult == Break) {
+    // a fatal error (TLS) ended the connection: without a job nothing more goes out, so shut
+    // the output down, or flush() would wait for it forever
+    onOutputShutdown();
     return nullptr;
+  }
 
   if (writeResult == New || readResult == New)
     return newJob();
